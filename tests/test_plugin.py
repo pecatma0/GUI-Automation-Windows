@@ -2,16 +2,20 @@ import unittest
 from unittest.mock import MagicMock, patch
 import os
 import sys
+from typing import Any, cast
 
-# テストターゲットがロードできるようにパスを通す
+# Ensure test target can be imported
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from gui_plugin.exceptions import (
+from tools import (
     WindowNotFoundError,
     ElementNotFoundError,
     InvalidParamsError,
+    get_windows,
+    focus_window,
+    get_ui_tree,
+    start_application,
 )
-import gui_plugin
 
 class TestGUIPlugin(unittest.TestCase):
     """GUI操作プラグインのユニットテストクラス。"""
@@ -34,7 +38,6 @@ class TestGUIPlugin(unittest.TestCase):
         mock_is_window: MagicMock,
     ) -> None:
         """起動中のウィンドウ一覧取得が正常に動作することを検証する。"""
-        # mockのセットアップ
         mock_is_window.return_value = True
         mock_is_visible.return_value = True
         mock_get_text.return_value = "テストメモ帳"
@@ -48,15 +51,13 @@ class TestGUIPlugin(unittest.TestCase):
 
         # EnumWindowsがコールバックを呼び出すように擬似実装
         def enum_impl(callback: object, extra: object) -> None:
-            # コールバック関数を呼ぶ
             func = cast(Any, callback)
             func(10001, None)
 
-        from typing import Any, cast
         mock_enum_windows.side_effect = enum_impl
 
         # 実行
-        windows = gui_plugin.get_windows(title_contains="テスト")
+        windows = get_windows(title_contains="テスト")
         
         self.assertEqual(len(windows), 1)
         self.assertEqual(windows[0]["title"], "テストメモ帳")
@@ -67,7 +68,7 @@ class TestGUIPlugin(unittest.TestCase):
     @patch("win32gui.IsWindow")
     @patch("win32gui.ShowWindow")
     @patch("win32gui.SetForegroundWindow")
-    @patch("gui_plugin.plugin.get_windows")
+    @patch("tools.get_windows")
     def test_focus_window_by_handle(
         self,
         mock_get_windows: MagicMock,
@@ -78,7 +79,7 @@ class TestGUIPlugin(unittest.TestCase):
         """ハンドル指定でのフォーカス処理が正常に動作することを検証する。"""
         mock_is_window.return_value = True
 
-        result = gui_plugin.focus_window(window_handle=12345)
+        result = focus_window(window_handle=12345)
         
         self.assertTrue(result["success"])
         self.assertEqual(result["handle"], 12345)
@@ -87,10 +88,10 @@ class TestGUIPlugin(unittest.TestCase):
     def test_get_ui_tree_invalid_params(self) -> None:
         """不正な引数でget_ui_treeを呼び出した際にエラーが発生することを検証する。"""
         with self.assertRaises(InvalidParamsError):
-            gui_plugin.get_ui_tree()
+            get_ui_tree()
 
     @patch("pywinauto.Application")
-    @patch("gui_plugin.plugin.get_windows")
+    @patch("tools.get_windows")
     def test_get_ui_tree_success(self, mock_get_windows: MagicMock, mock_app_class: MagicMock) -> None:
         """UIツリー取得が正常に動作し、シリアライズされることを検証する。"""
         mock_get_windows.return_value = [{
@@ -125,7 +126,7 @@ class TestGUIPlugin(unittest.TestCase):
         mock_app_class.return_value.connect.return_value = mock_app
 
         # 実行
-        result = gui_plugin.get_ui_tree(window_handle=9999, depth=1)
+        result = get_ui_tree(window_handle=9999, depth=1)
         
         self.assertIn("window", result)
         self.assertIn("tree", result)
@@ -152,7 +153,7 @@ class TestGUIPlugin(unittest.TestCase):
         mock_proc_instance.name.return_value = "notepad.exe"
         mock_process.return_value = mock_proc_instance
 
-        result = gui_plugin.start_application(cmd_line="notepad.exe")
+        result = start_application(cmd_line="notepad.exe")
         
         self.assertTrue(result["success"])
         self.assertEqual(result["process_id"], 9876)
