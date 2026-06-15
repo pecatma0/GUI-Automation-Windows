@@ -106,5 +106,42 @@ gui_plugin.do_action(
 本プロジェクトは OS 依存処理をモック化してテスト可能なユニットテストを含んでいます。
 
 ```bash
-.venv\Scripts\python -m unittest tests/test_plugin.py
+.venv\Scripts\python -m unittest discover -s tests -p "test_*.py"
 ```
+
+---
+
+## Hermes Agent Desktop への取り込み（MCP サーバー）
+
+本プラグインは MCP (Model Context Protocol) サーバーとして動作するため、Hermes Agent Desktop に登録して GUI 操作ツールとして利用できます。
+
+### 1. 登録手順
+1. Hermes Agent Desktop を起動します。
+2. 設定画面（Settings）または設定ファイル（`config.json` / `hermes.json` など）の MCP サーバー設定箇所を開きます。
+3. 新しい MCP サーバーを追加し、以下の起動コマンドと引数を設定します。
+
+**設定例 (JSON形式の場合):**
+```json
+{
+  "mcpServers": {
+    "windows-gui-automation": {
+      "command": "C:\\Antigravity\\GUI-Automation-Windows\\.venv\\Scripts\\python.exe",
+      "args": [
+        "-m",
+        "gui_plugin.mcp_server"
+      ],
+      "env": {
+        "PYTHONPATH": "C:\\Antigravity\\GUI-Automation-Windows"
+      }
+    }
+  }
+}
+```
+※ `command` や `PYTHONPATH` には本プロジェクトを配置した環境の実パスを適宜指定してください。
+
+### 2. 手動での起動テスト
+動作確認のために、コマンドラインから直接起動することも可能です：
+```bash
+.venv\Scripts\python -m gui_plugin.mcp_server
+```
+起動すると、標準入出力を通じた MCP プロトコル待ち受け状態になります。
