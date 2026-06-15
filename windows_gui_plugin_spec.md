@@ -18,6 +18,7 @@
    - 4.3 [do_action](#43-do_action)
    - 4.4 [get_windows](#44-get_windows)
    - 4.5 [focus_window](#45-focus_window)
+   - 4.6 [start_application](#46-start_application)
 5. [JSON スキーマ定義](#5-json-スキーマ定義)
    - 5.1 [UI ツリーノード](#51-ui-ツリーノード)
    - 5.2 [検索条件](#52-検索条件)
@@ -272,6 +273,41 @@ def focus_window(
 ```
 
 **返却値:** [実行結果](#54-実行結果) を参照
+
+---
+
+### 4.6 `start_application`
+
+指定されたコマンドラインでプログラムを起動する。
+
+**シグネチャ:**
+
+```python
+def start_application(
+    cmd_line: str,
+    timeout: float = 5.0,
+) -> dict
+```
+
+**パラメータ:**
+
+| パラメータ | 型 | 必須 | 説明 |
+|------------|-----|------|------|
+| `cmd_line` | str | ✓ | 起動するプログラムのコマンドライン（例: `notepad.exe`） |
+| `timeout` | float | - | 起動待機秒数（デフォルト: 5.0） |
+
+**返却値:**
+```json
+{
+  "success": true,
+  "action": "start_application",
+  "process_id": 12345,
+  "process_name": "notepad.exe",
+  "elapsed_ms": 500,
+  "error": null,
+  "error_code": null
+}
+```
 
 ---
 
@@ -749,6 +785,25 @@ GUI_PLUGIN_TOOLS = [
                     "default": True
                 }
             }
+        }
+    },
+    {
+        "name": "start_application",
+        "description": "指定されたコマンドラインでプログラムを起動する。起動したプロセスのIDとプロセス名を返す。",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "cmd_line": {
+                    "type": "string",
+                    "description": "起動するプログラムのコマンドライン（例: notepad.exe）"
+                },
+                "timeout": {
+                    "type": "number",
+                    "description": "起動待機秒数（デフォルト: 5.0）",
+                    "default": 5.0
+                }
+            },
+            "required": ["cmd_line"]
         }
     }
 ]
