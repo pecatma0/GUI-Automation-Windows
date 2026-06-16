@@ -14,7 +14,7 @@ Hermes Agent に Windows GUI 操作能力を付与するためのプラグイン
 ---
 
 ## 動作要件
-
+- **Hermes Agent:** v0.16.0 (2026.6.5)
 - **OS:** Windows 10 / 11
 - **Python:** 3.13+
 - **依存ライブラリ:**
