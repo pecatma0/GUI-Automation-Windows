@@ -1,0 +1,11 @@
+name: gui-automation
+version: "1.0.0"
+description: "Windows GUI automation plugin using UI Automation"
+provides_tools:
+  - get_windows
+  - focus_window
+  - get_ui_tree
+  - find_element
+  - do_action
+  - start_application
+  - get_installed_applications

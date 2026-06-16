@@ -1,41 +1,136 @@
+"""Tools for Windows GUI automation. All features consolidated into a single module."""
 import time
 import os
 import sys
 import logging
+import ctypes
 from typing import Any, cast
+from dotenv import load_dotenv
+
 import win32gui
 import win32process
 import win32con
 import psutil
 import pywinauto
 from pywinauto.controls.uiawrapper import UIAWrapper
-from pywinauto.controls.hwndwrapper import HwndWrapper
 
-from gui_plugin.exceptions import (
-    GUIPluginError,
-    WindowNotFoundError,
-    ElementNotFoundError,
-    ElementDisabledError,
-    ElementNotVisibleError,
-    ActionNotSupportedError,
-    TimeoutError,
-    AccessDeniedError,
-    BackendError,
-    InvalidParamsError,
-)
-from gui_plugin.logger import logger
-from gui_plugin.config import CONFIG
+# ==========================================
+# 1. Configuration & Environment Variables
+# ==========================================
+# Load environment variables from .env file.
+# Exit if config file fails to load or required keys are missing.
+loaded = load_dotenv()
+if not loaded:
+    # Try directory where this script is located
+    alt_path = os.path.join(os.path.dirname(__file__), ".env")
+    if os.path.exists(alt_path):
+        loaded = load_dotenv(alt_path)
 
-# UI要素を一時的にキャッシュして handle（整数キー）で操作できるようにする
-# 実オブジェクトの参照ID (id()) をキーとして UIAWrapper を格納する
+if not loaded:
+    print("エラー: .env ファイルの読み込みに失敗しました。プロセスを終了します。", file=sys.stderr)
+    sys.exit(1)
+
+CONFIG = {
+    "DEFAULT_TIMEOUT": os.getenv("DEFAULT_TIMEOUT"),
+    "DEFAULT_WAIT_AFTER": os.getenv("DEFAULT_WAIT_AFTER"),
+    "LOG_FILE_PATH": os.getenv("LOG_FILE_PATH"),
+}
+
+for key, val in CONFIG.items():
+    if val is None:
+        print(f"エラー: 必須の設定キー {key} が .env に定義されていません。プロセスを終了します。", file=sys.stderr)
+        sys.exit(1)
+
+# ==========================================
+# 2. Exceptions
+# ==========================================
+class GUIPluginError(Exception):
+    """GUI操作プラグインの基底例外クラス。"""
+    def __init__(self, error_code: str, message: str) -> None:
+        super().__init__(message)
+        self.error_code: str = error_code
+        self.message: str = message
+
+class WindowNotFoundError(GUIPluginError):
+    """指定されたウィンドウが見つからない場合のエラー。"""
+    def __init__(self, message: str) -> None:
+        super().__init__("WINDOW_NOT_FOUND", message)
+
+class ElementNotFoundError(GUIPluginError):
+    """指定されたUI要素が見つからない場合のエラー。"""
+    def __init__(self, message: str) -> None:
+        super().__init__("ELEMENT_NOT_FOUND", message)
+
+class ElementDisabledError(GUIPluginError):
+    """要素が無効状態であり操作できない場合のエラー。"""
+    def __init__(self, message: str) -> None:
+        super().__init__("ELEMENT_DISABLED", message)
+
+class ElementNotVisibleError(GUIPluginError):
+    """要素が非表示であり操作できない場合のエラー。"""
+    def __init__(self, message: str) -> None:
+        super().__init__("ELEMENT_NOT_VISIBLE", message)
+
+class ActionNotSupportedError(GUIPluginError):
+    """要素が要求されたアクションに対応していない場合のエラー。"""
+    def __init__(self, message: str) -> None:
+        super().__init__("ACTION_NOT_SUPPORTED", message)
+
+class TimeoutError(GUIPluginError):
+    """待機処理でタイムアウトした場合のエラー。"""
+    def __init__(self, message: str) -> None:
+        super().__init__("TIMEOUT", message)
+
+class AccessDeniedError(GUIPluginError):
+    """OS権限不足などで操作が拒否された場合のエラー。"""
+    def __init__(self, message: str) -> None:
+        super().__init__("ACCESS_DENIED", message)
+
+class BackendError(GUIPluginError):
+    """内部バックエンドライブラリでエラーが発生した場合のエラー。"""
+    def __init__(self, message: str) -> None:
+        super().__init__("BACKEND_ERROR", message)
+
+class InvalidParamsError(GUIPluginError):
+    """パラメータが不正である場合のエラー。"""
+    def __init__(self, message: str) -> None:
+        super().__init__("INVALID_PARAMS", message)
+
+# ==========================================
+# 3. Logging Setup
+# ==========================================
+def setup_logger() -> logging.Logger:
+    """プラグイン用のロガーを設定する。"""
+    logger = logging.getLogger("gui_plugin")
+    logger.setLevel(logging.DEBUG)
+    
+    if not logger.handlers:
+        log_file = CONFIG["LOG_FILE_PATH"]
+        file_handler = logging.FileHandler(log_file, encoding="utf-8")
+        file_handler.setLevel(logging.WARNING) # エラーおよび警告ログのみをファイル出力して管理する
+        
+        formatter = logging.Formatter(
+            "%(asctime)s [%(levelname)s] %(name)s (%(filename)s:%(lineno)d): %(message)s"
+        )
+        file_handler.setFormatter(formatter)
+        logger.addHandler(file_handler)
+        
+        console_handler = logging.StreamHandler()
+        console_handler.setLevel(logging.INFO)
+        console_handler.setFormatter(formatter)
+        logger.addHandler(console_handler)
+        
+    return logger
+
+logger = setup_logger()
+
+# ==========================================
+# 4. Element Cache Operations
+# ==========================================
 _element_cache: dict[int, UIAWrapper] = {}
 
 def _register_element(element: UIAWrapper) -> int:
-    """要素をキャッシュに登録し、一意のハンドル（整数ID）を返す。
-    
-    UI Automation 要素の多くは固有のHWNDを持たないため、
-    PythonのオブジェクトIDを仮想ハンドルとして使用して一意特定可能にする意図。
-    """
+    """要素をキャッシュに登録し、一意のハンドル（整数ID）を返す。"""
     element_id = id(element)
     _element_cache[element_id] = element
     return element_id
@@ -46,125 +141,11 @@ def _get_cached_element(element_id: int) -> UIAWrapper:
         raise ElementNotFoundError(f"指定されたハンドル {element_id} の要素がキャッシュに見つかりません。再取得してください。")
     return _element_cache[element_id]
 
-def get_windows(
-    title_contains: str | None = None,
-    process_name: str | None = None,
-    visible_only: bool = True,
-) -> list[dict[str, object]]:
-    """起動中のウィンドウ一覧を取得する。
-    
-    操作対象アプリのハンドルを確認する際に最初に呼ぶ。
-    """
-    try:
-        windows: list[dict[str, object]] = []
-
-        def enum_windows_callback(hwnd: int, extra: object) -> bool:
-            # 可視性チェック
-            if visible_only and not win32gui.IsWindowVisible(hwnd):
-                return True
-
-            title = win32gui.GetWindowText(hwnd)
-            # タイトルフィルタ
-            if title_contains and title_contains not in title:
-                return True
-
-            # プロセスIDおよび名前の取得
-            try:
-                _, pid = win32process.GetWindowThreadProcessId(hwnd)
-                proc = psutil.Process(pid)
-                proc_name = proc.name()
-            except Exception:
-                pid = 0
-                proc_name = ""
-
-            # プロセス名フィルタ
-            if process_name and process_name.lower() not in proc_name.lower():
-                return True
-
-            # Rect取得
-            rect = {"x": 0, "y": 0, "width": 0, "height": 0}
-            if win32gui.IsWindow(hwnd):
-                try:
-                    left, top, right, bottom = win32gui.GetWindowRect(hwnd)
-                    rect = {
-                        "x": left,
-                        "y": top,
-                        "width": right - left,
-                        "height": bottom - top,
-                    }
-                except Exception:
-                    pass
-
-            is_minimized = win32gui.IsIconic(hwnd) != 0
-
-            windows.append({
-                "title": title,
-                "handle": hwnd,
-                "process_id": pid,
-                "process_name": proc_name,
-                "visible": win32gui.IsWindowVisible(hwnd) != 0,
-                "minimized": is_minimized,
-                "rect": rect,
-            })
-            return True
-
-        win32gui.EnumWindows(enum_windows_callback, None)
-        return windows
-
-    except Exception as e:
-        logger.error(f"get_windows でエラーが発生しました: {str(e)}")
-        raise BackendError(f"ウィンドウ一覧の取得中にエラーが発生しました: {str(e)}")
-
-
-def focus_window(
-    window_title: str | None = None,
-    window_handle: int | None = None,
-    restore_if_minimized: bool = True,
-) -> dict[str, object]:
-    """指定ウィンドウを最前面に移動してフォーカスを当てる。"""
-    start_time = time.time()
-    hwnd = window_handle
-
-    if not hwnd and window_title:
-        # タイトルから検索
-        wins = get_windows(title_contains=window_title, visible_only=True)
-        if not wins:
-            raise WindowNotFoundError(f"タイトル '{window_title}' に一致する可視ウィンドウが見つかりません。")
-        hwnd = cast(int, wins[0]["handle"])
-
-    if not hwnd or not win32gui.IsWindow(hwnd):
-        raise WindowNotFoundError(f"指定されたウィンドウハンドル {hwnd} は無効または存在しません。")
-
-    try:
-        # 最小化の復元
-        if restore_if_minimized and win32gui.IsIconic(hwnd):
-            win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
-            time.sleep(0.2)
-
-        # 最前面表示とフォーカス
-        win32gui.ShowWindow(hwnd, win32con.SW_SHOW)
-        win32gui.SetForegroundWindow(hwnd)
-        
-        # フォーカス完了を待機
-        time.sleep(0.3)
-
-        elapsed = int((time.time() - start_time) * 1000)
-        return {
-            "success": True,
-            "action": "focus_window",
-            "handle": hwnd,
-            "elapsed_ms": elapsed,
-            "error": None,
-            "error_code": None,
-            "state_after": None,
-        }
-    except Exception as e:
-        logger.error(f"focus_window でエラーが発生しました (HWND={hwnd}): {str(e)}")
-        raise AccessDeniedError(f"ウィンドウのフォーカスに失敗しました（管理者権限が必要な可能性があります）: {str(e)}")
-
-
-def _serialize_element(element: UIAWrapper) -> dict[str, object]:
-    """UIAWrapper要素を仕様書のJSON構造にシリアル化する。"""
+# ==========================================
+# 5. Serialization & Tree Builders
+# ==========================================
+def _serialize_element(element: UIAWrapper) -> dict[str, Any]:
+    """UIAWrapper要素をシリアル化する。"""
     try:
         rect = element.rectangle()
         rect_dict = {
@@ -176,12 +157,10 @@ def _serialize_element(element: UIAWrapper) -> dict[str, object]:
     except Exception:
         rect_dict = {"x": 0, "y": 0, "width": 0, "height": 0}
 
-    # 一意な仮想ハンドルを登録して取得する
     virtual_handle = _register_element(element)
 
     try:
-        # control_type
-        control_type = element.element_info.control_type
+        control_type = element.element_info.control_type or "Unknown"
     except Exception:
         control_type = "Unknown"
 
@@ -210,7 +189,6 @@ def _serialize_element(element: UIAWrapper) -> dict[str, object]:
     except Exception:
         visible = False
 
-    # 現在の値 (Edit, ComboBoxなど)
     value = None
     try:
         if hasattr(element, "get_value"):
@@ -233,8 +211,7 @@ def _serialize_element(element: UIAWrapper) -> dict[str, object]:
         "children": [],
     }
 
-
-def _build_tree(element: UIAWrapper, current_depth: int, max_depth: int, include_invisible: bool) -> dict[str, object]:
+def _build_tree(element: UIAWrapper, current_depth: int, max_depth: int, include_invisible: bool) -> dict[str, Any]:
     """再帰的に子要素を探索してツリーを構築する。"""
     node = _serialize_element(element)
     
@@ -251,11 +228,121 @@ def _build_tree(element: UIAWrapper, current_depth: int, max_depth: int, include
             if not include_invisible and not child.is_visible():
                 continue
             child_node = _build_tree(child, current_depth + 1, max_depth, include_invisible)
-            cast(list[dict[str, object]], node["children"]).append(child_node)
+            node["children"].append(child_node)
         except Exception:
             pass
 
     return node
+
+# ==========================================
+# 6. Core Plugin Tools
+# ==========================================
+def get_windows(
+    title_contains: str | None = None,
+    process_name: str | None = None,
+    visible_only: bool = True,
+) -> list[dict[str, Any]]:
+    """起動中のウィンドウ一覧を取得する。"""
+    try:
+        windows: list[dict[str, Any]] = []
+
+        def enum_windows_callback(hwnd: int, extra: object) -> bool:
+            try:
+                if visible_only and not win32gui.IsWindowVisible(hwnd):
+                    return True
+
+                title = win32gui.GetWindowText(hwnd)
+                if title_contains and title_contains not in title:
+                    return True
+
+                try:
+                    _, pid = win32process.GetWindowThreadProcessId(hwnd)
+                    proc = psutil.Process(pid)
+                    proc_name = proc.name()
+                except Exception:
+                    pid = 0
+                    proc_name = ""
+
+                if process_name and process_name.lower() not in proc_name.lower():
+                    return True
+
+                rect = {"x": 0, "y": 0, "width": 0, "height": 0}
+                if win32gui.IsWindow(hwnd):
+                    try:
+                        left, top, right, bottom = win32gui.GetWindowRect(hwnd)
+                        rect = {
+                            "x": left,
+                            "y": top,
+                            "width": right - left,
+                            "height": bottom - top,
+                        }
+                    except Exception:
+                        pass
+
+                is_minimized = win32gui.IsIconic(hwnd) != 0
+
+                windows.append({
+                    "title": title,
+                    "handle": hwnd,
+                    "process_id": pid,
+                    "process_name": proc_name,
+                    "visible": win32gui.IsWindowVisible(hwnd) != 0,
+                    "minimized": is_minimized,
+                    "rect": rect,
+                })
+            except Exception as ex:
+                logger.warning(f"enum_windows_callback error for hwnd {hwnd}: {ex}")
+            return True
+
+        ctypes.windll.kernel32.SetLastError(0)
+        win32gui.EnumWindows(enum_windows_callback, None)
+        return windows
+
+    except Exception as e:
+        logger.error(f"get_windows でエラーが発生しました: {str(e)}")
+        raise BackendError(f"ウィンドウ一覧の取得中にエラーが発生しました: {str(e)}")
+
+
+def focus_window(
+    window_title: str | None = None,
+    window_handle: int | None = None,
+    restore_if_minimized: bool = True,
+) -> dict[str, Any]:
+    """指定ウィンドウを最前面に移動してフォーカスを当てる。"""
+    start_time = time.time()
+    hwnd = window_handle
+
+    if not hwnd and window_title:
+        wins = get_windows(title_contains=window_title, visible_only=True)
+        if not wins:
+            raise WindowNotFoundError(f"タイトル '{window_title}' に一致する可視ウィンドウが見つかりません。")
+        hwnd = cast(int, wins[0]["handle"])
+
+    if not hwnd or not win32gui.IsWindow(hwnd):
+        raise WindowNotFoundError(f"指定されたウィンドウハンドル {hwnd} は無効または存在しません。")
+
+    try:
+        if restore_if_minimized and win32gui.IsIconic(hwnd):
+            win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+            time.sleep(0.2)
+
+        win32gui.ShowWindow(hwnd, win32con.SW_SHOW)
+        win32gui.SetForegroundWindow(hwnd)
+        time.sleep(0.3)
+
+        elapsed = int((time.time() - start_time) * 1000)
+        return {
+            "success": True,
+            "action": "focus_window",
+            "handle": hwnd,
+            "elapsed_ms": elapsed,
+            "error": None,
+            "error_code": None,
+            "state_after": None,
+        }
+    except Exception as e:
+        logger.error(f"focus_window でエラーが発生しました (HWND={hwnd}): {str(e)}")
+        raise AccessDeniedError(f"ウィンドウのフォーカスに失敗しました（管理者権限が必要な可能性があります）: {str(e)}")
 
 
 def get_ui_tree(
@@ -264,7 +351,7 @@ def get_ui_tree(
     process_name: str | None = None,
     depth: int = 3,
     include_invisible: bool = False,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     """指定ウィンドウの UI 要素ツリーを JSON で返す。"""
     if not (window_title or window_handle or process_name):
         raise InvalidParamsError("window_title, window_handle, process_name のいずれか一つを必ず指定してください。")
@@ -273,26 +360,20 @@ def get_ui_tree(
     if not hwnd:
         wins = get_windows(title_contains=window_title, process_name=process_name, visible_only=True)
         if not wins:
-            # 非表示含めて再検索
             wins = get_windows(title_contains=window_title, process_name=process_name, visible_only=False)
             if not wins:
                 raise WindowNotFoundError("指定された条件のウィンドウが見つかりません。")
         hwnd = cast(int, wins[0]["handle"])
 
     try:
-        # キャッシュのクリア（メモリリーク防止のため取得時に一度リセット）
-        # ただし、操作中に再取得することもあるので、最新のツリーで再構成する
         _element_cache.clear()
 
-        # pywinauto Application 接続
         app = pywinauto.Application(backend="uia").connect(handle=hwnd)
         root_window = app.window(handle=hwnd)
         
-        # 接続が正しいか確認
         if not root_window.exists():
             raise WindowNotFoundError("指定ハンドルに対応するウィンドウが pywinauto から検出できませんでした。")
 
-        # ウィンドウ情報のシリアライズ
         win_info = None
         for w in get_windows(visible_only=False):
             if w["handle"] == hwnd:
@@ -314,10 +395,10 @@ def get_ui_tree(
 def find_element(
     window_title: str | None = None,
     window_handle: int | None = None,
-    conditions: dict[str, object] = {},
+    conditions: dict[str, Any] = {},
     find_all: bool = False,
     timeout: float = 5.0,
-) -> dict[str, object] | list[dict[str, object]]:
+) -> Any:
     """検索条件に一致する UI 要素を返す。"""
     if not conditions:
         raise InvalidParamsError("検索条件(conditions)を指定してください。")
@@ -334,17 +415,14 @@ def find_element(
 
     start_time = time.time()
     
-    # タイムアウトループ
     while True:
         try:
-            # 要素ツリー全体を取得して走査する
             tree_response = get_ui_tree(window_handle=hwnd, depth=cast(int, conditions.get("depth", 5)), include_invisible=True)
             root_node = tree_response["tree"]
             
-            matched_nodes: list[dict[str, object]] = []
+            matched_nodes: list[dict[str, Any]] = []
 
-            def traverse_and_match(node: dict[str, object]) -> None:
-                # 一致判定
+            def traverse_and_match(node: dict[str, Any]) -> None:
                 match = True
                 
                 if "control_type" in conditions:
@@ -379,11 +457,10 @@ def find_element(
                 if match:
                     matched_nodes.append(node)
 
-                # 子要素の走査
-                for child in cast(list[dict[str, object]], node.get("children", [])):
+                for child in cast(list[dict[str, Any]], node.get("children", [])):
                     traverse_and_match(child)
 
-            traverse_and_match(cast(dict[str, object], root_node))
+            traverse_and_match(root_node)
 
             if matched_nodes:
                 if find_all:
@@ -404,12 +481,12 @@ def find_element(
 
 def do_action(
     handle: int | None = None,
-    element: dict[str, object] | None = None,
+    element: dict[str, Any] | None = None,
     action: str = "",
-    params: dict[str, object] = {},
+    params: dict[str, Any] = {},
     wait_after: float = 0.5,
-    verify: dict[str, object] | None = None,
-) -> dict[str, object]:
+    verify: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """UI 要素に対して操作を実行する。"""
     start_time = time.time()
     
@@ -420,10 +497,8 @@ def do_action(
     if not target_handle:
         raise InvalidParamsError("handle または element のいずれかを指定してください。")
 
-    # キャッシュから要素を取得
     uia_element = _get_cached_element(target_handle)
 
-    # 操作前の可視・有効状態の検証
     try:
         if not uia_element.is_visible():
             raise ElementNotVisibleError("操作対象の要素が非表示です。")
@@ -435,7 +510,6 @@ def do_action(
         raise BackendError(f"要素の状態検証中にエラーが発生しました: {str(e)}")
 
     try:
-        # アクション実行
         if action == "click":
             x = cast(int, params.get("x_offset", 0))
             y = cast(int, params.get("y_offset", 0))
@@ -466,15 +540,10 @@ def do_action(
             with_enter = cast(bool, params.get("with_enter", False))
             
             if clear_first:
-                # テキストクリア
                 uia_element.set_focus()
                 uia_element.type_keys("^a{BACKSPACE}", set_foreground=False)
                 
-            # 入力
             if text:
-                # 日本語などのIME入力も考慮して、type_keys(..., with_spaces=True)
-                # type_keysの引数において、`%` `{` などの特殊文字がエスケープされているか確認されるため、
-                # 直接テキストを送るための処理
                 uia_element.type_keys(text, with_spaces=True, with_tabs=True, with_newlines=True, set_foreground=False)
             if with_enter:
                 uia_element.type_keys("{ENTER}", set_foreground=False)
@@ -487,7 +556,6 @@ def do_action(
             value = params.get("value")
             index = params.get("index")
             
-            # ComboBox or ListBox
             if hasattr(uia_element, "select"):
                 if value is not None:
                     uia_element.select(cast(str, value))
@@ -502,7 +570,6 @@ def do_action(
             if hasattr(uia_element, "check"):
                 uia_element.check()
             else:
-                # Clickで代用するか、例外
                 raise ActionNotSupportedError("この要素は check アクションをサポートしていません。")
 
         elif action == "uncheck":
@@ -514,20 +581,12 @@ def do_action(
         elif action == "scroll":
             direction = cast(str, params.get("direction", "down"))
             amount = cast(int, params.get("amount", 3))
-            # pywinautoのscroll機能を利用
-            # direction: up, down, left, right
             if hasattr(uia_element, "scroll"):
-                # scrollメソッドを持つコントロール（例: ComboBoxやListBoxなど）
-                # または、単純なマウスホイールエミュレーション
-                # directionに応じたスクロール
                 uia_element.scroll(direction=direction, amount=amount)
             else:
-                # フォールバックとしてマウスホイール
-                # pywinauto.mouse.scroll を使うことも可能
                 raise ActionNotSupportedError("この要素は直接の scroll をサポートしていません。")
 
         elif action == "hover":
-            # ホバー処理
             uia_element.move_mouse_input()
             duration = cast(float, params.get("duration", 0.0))
             if duration > 0:
@@ -540,7 +599,6 @@ def do_action(
             uia_element.type_keys(keys, set_foreground=False)
 
         elif action == "invoke":
-            # UIA Invoke Pattern の呼び出し
             if hasattr(uia_element, "invoke"):
                 uia_element.invoke()
             else:
@@ -563,10 +621,6 @@ def do_action(
             if hasattr(uia_element, "set_edit_text"):
                 uia_element.set_edit_text(val)
             elif hasattr(uia_element, "set_value"):
-                # UIA value pattern
-                # pywinautoでは直接の set_value メソッドがない場合もあるが、
-                # uia_element.iface_value.SetValue(val) などを comtypes 経由で呼べる
-                # ここでは安全のために型に応じてフォールバック
                 try:
                     uia_element.iface_value.SetValue(val)
                 except Exception:
@@ -582,10 +636,8 @@ def do_action(
         logger.error(f"do_action 実行エラー (action={action}, handle={target_handle}): {str(e)}")
         raise BackendError(f"アクションの実行中にエラーが発生しました: {str(e)}")
 
-    # 指定された待機時間
     time.sleep(wait_after)
 
-    # verify (検証ループ)
     state_after = None
     if verify:
         expect = verify.get("expect")
@@ -596,22 +648,15 @@ def do_action(
         while time.time() - verify_start < timeout:
             try:
                 if expect == "element_appears":
-                    # 指定されたcontrol_typeなどの要素が出現するか確認
-                    # ウィンドウ内の要素を再検索する
-                    # 検索条件を構築
                     conds = {
                         "control_type": verify.get("control_type"),
                         "name": verify.get("name"),
                         "name_contains": verify.get("name_contains"),
                         "visible": True
                     }
-                    # Noneや未指定を取り除く
                     conds = {k: v for k, v in conds.items() if v is not None}
                     
                     try:
-                        # find_elementに親ウィンドウなどの情報を引き継ぎたいが、
-                        # 今回はキャッシュ全体の要素を走査するか、親ウィンドウを見つけて走査する。
-                        # 操作対象要素(uia_element)のトップレベルウィンドウを取得する
                         top_window = uia_element.top_level_parent()
                         top_hwnd = top_window.handle
                         find_element(window_handle=top_hwnd, conditions=conds, timeout=0.1)
@@ -621,19 +666,15 @@ def do_action(
                         pass
                         
                 elif expect == "element_disappears":
-                    # 要素が消えるまで待つ
                     try:
-                        # is_visible() が False になるか、存在しなくなるか
                         if not uia_element.is_visible():
                             verified = True
                             break
                     except Exception:
-                        # 存在しなくなると例外が発生するため、それも消滅とみなす
                         verified = True
                         break
                         
                 elif expect == "value_changes":
-                    # value値が変わるまで待つ
                     expected_value = verify.get("value")
                     current_value = None
                     if hasattr(uia_element, "get_value"):
@@ -645,14 +686,8 @@ def do_action(
                         if current_value == expected_value:
                             verified = True
                             break
-                    else:
-                        # 単に変化したか
-                        # 初期値が params にあれば、それと異なるか判定可能。
-                        # ここでは簡易的に期待する値への変化をサポート
-                        pass
                         
                 elif expect == "window_closes":
-                    # トップレベルウィンドウが閉じるまで待つ
                     top_window = uia_element.top_level_parent()
                     top_hwnd = top_window.handle
                     if not win32gui.IsWindow(top_hwnd):
@@ -666,7 +701,6 @@ def do_action(
         if not verified:
             raise TimeoutError(f"検証条件 '{expect}' がタイムアウト {timeout} 秒以内に満たされませんでした。")
 
-        # verify成功時の最新状態を構築
         try:
             state_after = {
                 "control_type": uia_element.element_info.control_type,
@@ -689,29 +723,23 @@ def do_action(
     }
 
 
-def start_application(cmd_line: str, timeout: float = 5.0) -> dict[str, object]:
-    """指定されたコマンドラインでプログラムを起動する。
-    
-    起動したプロセスのPIDおよびプロセス名を返却し、LLMがこれを記憶・追跡できるようにする意図。
-    """
+def start_application(cmd_line: str, timeout: float = 5.0) -> dict[str, Any]:
+    """指定されたコマンドラインでプログラムを起動する。"""
     if not cmd_line:
         raise InvalidParamsError("起動するコマンドライン(cmd_line)を指定してください。")
         
     start_time = time.time()
     try:
         import subprocess
-        # 非同期でプロセスを起動
         proc = subprocess.Popen(cmd_line, shell=True)
         pid = proc.pid
         
-        # プロセスが起動するまで少し待機し、psutilでプロセス情報を取得
         time.sleep(0.5)
         
         try:
             p = psutil.Process(pid)
             proc_name = p.name()
         except Exception:
-            # cmd_lineの最初のワードからフォールバック名を取得
             proc_name = os.path.basename(cmd_line.split()[0])
 
         elapsed = int((time.time() - start_time) * 1000)
@@ -727,4 +755,113 @@ def start_application(cmd_line: str, timeout: float = 5.0) -> dict[str, object]:
     except Exception as e:
         logger.error(f"start_application でエラーが発生しました (cmd={cmd_line}): {str(e)}")
         raise BackendError(f"プログラムの起動に失敗しました: {str(e)}")
+
+
+def get_installed_applications(name_contains: str | None = None) -> list[dict[str, Any]]:
+    """インストールされているアプリケーションの一覧を取得する。
+
+    Windowsのレジストリ（Uninstallキー）から、インストールされている
+    アプリケーションのDisplayName、DisplayVersion、Publisher、InstallLocation、UninstallStringを取得する。
+
+    Args:
+        name_contains: フィルタリング用の文字列。アプリケーション名にこの文字列が含まれるもののみを抽出する（大文字小文字は区別しない）。
+
+    Returns:
+        アプリケーション情報の辞書のリスト。DisplayNameで昇順ソートされている。
+
+    Raises:
+        BackendError: レジストリ処理中に予期せぬエラーが発生した場合。
+    """
+    import winreg
+    
+    # 走査対象のレジストリパスとルートキーの定義
+    registry_targets = [
+        (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"),
+        (winreg.HKEY_CURRENT_USER, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall")
+    ]
+    
+    # 64bit OSで動作している32bitプロセスのためのWow6432Node
+    # 自身のアーキテクチャにかかわらず、両方を探索するためにWow6432Nodeも明示的に走査する
+    registry_targets.append(
+        (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall")
+    )
+
+    apps_dict: dict[str, dict[str, Any]] = {}
+
+    for root_key, sub_key_path in registry_targets:
+        try:
+            # winreg.KEY_READ | winreg.KEY_WOW64_64KEY を指定することで、
+            # 32bit/64bitのレジストリビューリダイレクトを回避してアクセス
+            access_mask = winreg.KEY_READ
+            # Wow6432Nodeではない通常のキーにアクセスする際、64bitビューを明示的に指定
+            if "Wow6432Node" not in sub_key_path:
+                access_mask |= winreg.KEY_WOW64_64KEY
+                
+            with winreg.OpenKey(root_key, sub_key_path, 0, access_mask) as key:
+                sub_keys_count, _, _ = winreg.QueryInfoKey(key)
+                for i in range(sub_keys_count):
+                    try:
+                        sub_key_name = winreg.EnumKey(key, i)
+                        with winreg.OpenKey(key, sub_key_name) as sub_key:
+                            # DisplayNameが無いものはシステムパッチや内部コンポーネントである可能性が高いためスキップ
+                            try:
+                                name, _ = winreg.QueryValueEx(sub_key, "DisplayName")
+                                if not name or not isinstance(name, str):
+                                    continue
+                            except OSError:
+                                continue
+
+                            # フィルタ条件がある場合、部分一致（大文字小文字無視）を確認
+                            if name_contains and name_contains.lower() not in name.lower():
+                                continue
+
+                            # その他の情報を取得（存在しない場合はNone）
+                            version = None
+                            try:
+                                version, _ = winreg.QueryValueEx(sub_key, "DisplayVersion")
+                            except OSError:
+                                pass
+
+                            publisher = None
+                            try:
+                                publisher, _ = winreg.QueryValueEx(sub_key, "Publisher")
+                            except OSError:
+                                pass
+
+                            install_location = None
+                            try:
+                                install_location, _ = winreg.QueryValueEx(sub_key, "InstallLocation")
+                            except OSError:
+                                pass
+
+                            uninstall_string = None
+                            try:
+                                uninstall_string, _ = winreg.QueryValueEx(sub_key, "UninstallString")
+                            except OSError:
+                                pass
+
+                            # 重複はDisplayNameをキーとして排除。最初に見つかったものを優先し、上書きしない
+                            if name not in apps_dict:
+                                apps_dict[name] = {
+                                    "name": name,
+                                    "version": version,
+                                    "publisher": publisher,
+                                    "install_location": install_location,
+                                    "uninstall_string": uninstall_string,
+                                }
+                    except OSError as e:
+                        # 個別のサブキーの読み込み失敗はログ出力して継続（アクセス権限不足など）
+                        logger.warning(f"レジストリサブキーの読み込みに失敗しました: {e}")
+                        continue
+        except OSError as e:
+            # キー自体が存在しない場合や、アクセス権限エラーなどは警告ログを出力して処理を継続する
+            logger.warning(f"レジストリキー {sub_key_path} のオープンに失敗しました: {e}")
+            continue
+        except Exception as e:
+            logger.error(f"レジストリ走査中に予期しないエラーが発生しました: {e}")
+            raise BackendError(f"インストール済みアプリケーションの取得に失敗しました: {str(e)}")
+
+    # 表示名で昇順ソートしたリストを返却
+    sorted_apps = sorted(apps_dict.values(), key=lambda x: x["name"].lower())
+    return sorted_apps
 
