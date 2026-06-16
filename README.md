@@ -29,14 +29,10 @@ Hermes Agent に Windows GUI 操作能力を付与するためのプラグイン
 
 ## セットアップ手順
 
-1. **仮想環境の作成**
+1. **依存パッケージのインストール**
+   仮想環境は利用せず、システムの Python 環境に直接インストールします。
    ```bash
-   py -3.13 -m venv .venv
-   ```
-
-2. **依存パッケージのインストール**
-   ```bash
-   .venv\Scripts\pip install -r requirements.txt
+   py -m pip install -r requirements.txt
    ```
 
 3. **設定ファイル (`.env`) の配置**
@@ -106,5 +102,5 @@ gui_plugin.do_action(
 本プロジェクトは OS 依存処理をモック化してテスト可能なユニットテストを含んでいます。
 
 ```bash
-.venv\Scripts\python -m unittest tests/test_plugin.py
+py -m unittest tests/test_plugin.py
 ```

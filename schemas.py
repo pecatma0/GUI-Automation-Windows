@@ -135,3 +135,17 @@ START_APPLICATION_SCHEMA = {
         "required": ["cmd_line"]
     }
 }
+
+GET_INSTALLED_APPLICATIONS_SCHEMA = {
+    "name": "get_installed_applications",
+    "description": "インストール済みのアプリケーション一覧を取得する。アプリ名で部分一致検索することも可能。",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "name_contains": {
+                "type": "string",
+                "description": "アプリケーション名の部分一致フィルタ（大文字・小文字を区別しない、省略可）"
+            }
+        }
+    }
+}

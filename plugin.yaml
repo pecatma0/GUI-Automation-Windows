@@ -8,3 +8,4 @@ provides_tools:
   - find_element
   - do_action
   - start_application
+  - get_installed_applications

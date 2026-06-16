@@ -755,3 +755,113 @@ def start_application(cmd_line: str, timeout: float = 5.0) -> dict[str, Any]:
     except Exception as e:
         logger.error(f"start_application でエラーが発生しました (cmd={cmd_line}): {str(e)}")
         raise BackendError(f"プログラムの起動に失敗しました: {str(e)}")
+
+
+def get_installed_applications(name_contains: str | None = None) -> list[dict[str, Any]]:
+    """インストールされているアプリケーションの一覧を取得する。
+
+    Windowsのレジストリ（Uninstallキー）から、インストールされている
+    アプリケーションのDisplayName、DisplayVersion、Publisher、InstallLocation、UninstallStringを取得する。
+
+    Args:
+        name_contains: フィルタリング用の文字列。アプリケーション名にこの文字列が含まれるもののみを抽出する（大文字小文字は区別しない）。
+
+    Returns:
+        アプリケーション情報の辞書のリスト。DisplayNameで昇順ソートされている。
+
+    Raises:
+        BackendError: レジストリ処理中に予期せぬエラーが発生した場合。
+    """
+    import winreg
+    
+    # 走査対象のレジストリパスとルートキーの定義
+    registry_targets = [
+        (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"),
+        (winreg.HKEY_CURRENT_USER, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall")
+    ]
+    
+    # 64bit OSで動作している32bitプロセスのためのWow6432Node
+    # 自身のアーキテクチャにかかわらず、両方を探索するためにWow6432Nodeも明示的に走査する
+    registry_targets.append(
+        (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall")
+    )
+
+    apps_dict: dict[str, dict[str, Any]] = {}
+
+    for root_key, sub_key_path in registry_targets:
+        try:
+            # winreg.KEY_READ | winreg.KEY_WOW64_64KEY を指定することで、
+            # 32bit/64bitのレジストリビューリダイレクトを回避してアクセス
+            access_mask = winreg.KEY_READ
+            # Wow6432Nodeではない通常のキーにアクセスする際、64bitビューを明示的に指定
+            if "Wow6432Node" not in sub_key_path:
+                access_mask |= winreg.KEY_WOW64_64KEY
+                
+            with winreg.OpenKey(root_key, sub_key_path, 0, access_mask) as key:
+                sub_keys_count, _, _ = winreg.QueryInfoKey(key)
+                for i in range(sub_keys_count):
+                    try:
+                        sub_key_name = winreg.EnumKey(key, i)
+                        with winreg.OpenKey(key, sub_key_name) as sub_key:
+                            # DisplayNameが無いものはシステムパッチや内部コンポーネントである可能性が高いためスキップ
+                            try:
+                                name, _ = winreg.QueryValueEx(sub_key, "DisplayName")
+                                if not name or not isinstance(name, str):
+                                    continue
+                            except OSError:
+                                continue
+
+                            # フィルタ条件がある場合、部分一致（大文字小文字無視）を確認
+                            if name_contains and name_contains.lower() not in name.lower():
+                                continue
+
+                            # その他の情報を取得（存在しない場合はNone）
+                            version = None
+                            try:
+                                version, _ = winreg.QueryValueEx(sub_key, "DisplayVersion")
+                            except OSError:
+                                pass
+
+                            publisher = None
+                            try:
+                                publisher, _ = winreg.QueryValueEx(sub_key, "Publisher")
+                            except OSError:
+                                pass
+
+                            install_location = None
+                            try:
+                                install_location, _ = winreg.QueryValueEx(sub_key, "InstallLocation")
+                            except OSError:
+                                pass
+
+                            uninstall_string = None
+                            try:
+                                uninstall_string, _ = winreg.QueryValueEx(sub_key, "UninstallString")
+                            except OSError:
+                                pass
+
+                            # 重複はDisplayNameをキーとして排除。最初に見つかったものを優先し、上書きしない
+                            if name not in apps_dict:
+                                apps_dict[name] = {
+                                    "name": name,
+                                    "version": version,
+                                    "publisher": publisher,
+                                    "install_location": install_location,
+                                    "uninstall_string": uninstall_string,
+                                }
+                    except OSError as e:
+                        # 個別のサブキーの読み込み失敗はログ出力して継続（アクセス権限不足など）
+                        logger.warning(f"レジストリサブキーの読み込みに失敗しました: {e}")
+                        continue
+        except OSError as e:
+            # キー自体が存在しない場合や、アクセス権限エラーなどは警告ログを出力して処理を継続する
+            logger.warning(f"レジストリキー {sub_key_path} のオープンに失敗しました: {e}")
+            continue
+        except Exception as e:
+            logger.error(f"レジストリ走査中に予期しないエラーが発生しました: {e}")
+            raise BackendError(f"インストール済みアプリケーションの取得に失敗しました: {str(e)}")
+
+    # 表示名で昇順ソートしたリストを返却
+    sorted_apps = sorted(apps_dict.values(), key=lambda x: x["name"].lower())
+    return sorted_apps
+

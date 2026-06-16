@@ -7,6 +7,7 @@ from .schemas import (
     FIND_ELEMENT_SCHEMA,
     DO_ACTION_SCHEMA,
     START_APPLICATION_SCHEMA,
+    GET_INSTALLED_APPLICATIONS_SCHEMA,
 )
 
 
@@ -75,6 +76,15 @@ def handle_start_application(params, **kwargs):
     except Exception as e:
         return json.dumps({"success": False, "error": str(e)}, ensure_ascii=False)
 
+def handle_get_installed_applications(params, **kwargs):
+    """Retrieve list of installed applications."""
+    try:
+        name_contains = params.get("name_contains")
+        res = tools.get_installed_applications(name_contains=name_contains)
+        return json.dumps({"success": True, "applications": res}, ensure_ascii=False)
+    except Exception as e:
+        return json.dumps({"success": False, "error": str(e)}, ensure_ascii=False)
+
 def register(ctx):
     """Register tools to Hermes Agent context."""
     ctx.register_tool(
@@ -123,5 +133,13 @@ def register(ctx):
         schema=START_APPLICATION_SCHEMA,
         handler=handle_start_application,
         description="指定されたコマンドラインでプログラムを起動する。"
+    )
+
+    ctx.register_tool(
+        name="get_installed_applications",
+        toolset="gui_automation",
+        schema=GET_INSTALLED_APPLICATIONS_SCHEMA,
+        handler=handle_get_installed_applications,
+        description="インストール済みのアプリケーション一覧を取得する。"
     )
 

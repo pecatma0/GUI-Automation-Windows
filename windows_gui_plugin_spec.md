@@ -19,6 +19,7 @@
    - 4.4 [get_windows](#44-get_windows)
    - 4.5 [focus_window](#45-focus_window)
    - 4.6 [start_application](#46-start_application)
+   - 4.7 [get_installed_applications](#47-get_installed_applications)
 5. [JSON スキーマ定義](#5-json-スキーマ定義)
    - 5.1 [UI ツリーノード](#51-ui-ツリーノード)
    - 5.2 [検索条件](#52-検索条件)
@@ -306,6 +307,38 @@ def start_application(
   "elapsed_ms": 500,
   "error": null,
   "error_code": null
+}
+```
+
+---
+
+### 4.7 `get_installed_applications`
+
+Windowsにインストールされているアプリケーション（プログラム）の一覧を取得する。
+
+**シグネチャ:**
+
+```python
+def get_installed_applications(
+    name_contains: str | None = None,
+) -> list[dict]
+```
+
+**パラメータ:**
+
+| パラメータ | 型 | 必須 | 説明 |
+|------------|-----|------|------|
+| `name_contains` | str | - | アプリケーション名の部分一致フィルタ（大文字・小文字を区別しない、省略可） |
+
+**返却値の各要素:**
+
+```json
+{
+  "name": "Python 3.10.5 (64-bit)",
+  "version": "3.10.5",
+  "publisher": "Python Software Foundation",
+  "install_location": "C:\\Program Files\\Python310",
+  "uninstall_string": "C:\\Program Files\\Python310\\uninstall.exe"
 }
 ```
 
@@ -804,6 +837,19 @@ GUI_PLUGIN_TOOLS = [
                 }
             },
             "required": ["cmd_line"]
+        }
+    },
+    {
+        "name": "get_installed_applications",
+        "description": "インストール済みのアプリケーション一覧を取得する。アプリ名で部分一致検索することも可能。",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "name_contains": {
+                    "type": "string",
+                    "description": "アプリケーション名の部分一致フィルタ（大文字・小文字を区別しない、省略可）"
+                }
+            }
         }
     }
 ]

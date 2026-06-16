@@ -160,5 +160,98 @@ class TestGUIPlugin(unittest.TestCase):
         self.assertEqual(result["process_name"], "notepad.exe")
         mock_popen.assert_called_once_with("notepad.exe", shell=True)
 
+    @patch("winreg.OpenKey")
+    @patch("winreg.QueryInfoKey")
+    @patch("winreg.EnumKey")
+    @patch("winreg.QueryValueEx")
+    def test_get_installed_applications_success(
+        self,
+        mock_query_value: MagicMock,
+        mock_enum_key: MagicMock,
+        mock_query_info_key: MagicMock,
+        mock_open_key: MagicMock,
+    ) -> None:
+        """インストール済みアプリケーション一覧取得およびフィルタリングが正常に動作することを検証する。"""
+        import winreg
+        
+        # 各種キーの走査でのQueryInfoKeyの戻り値をモック化
+        mock_query_info_key.side_effect = [
+            (2, 0, 0),  # HKLM
+            (1, 0, 0),  # HKCU
+        ]
+        
+        mock_key_handle = MagicMock()
+        mock_open_key.side_effect = [
+            mock_key_handle,  # HKLM
+            mock_key_handle,  # AppA subkey
+            mock_key_handle,  # AppB subkey
+            mock_key_handle,  # HKCU
+            mock_key_handle,  # AppC subkey
+            OSError("Wow6432Node not found"),  # Wow6432Node は存在しない想定
+        ]
+        
+        mock_enum_key.side_effect = [
+            "AppA_Key", "AppB_Key",  # HKLM subkeys
+            "AppC_Key",              # HKCU subkeys
+        ]
+        
+        # QueryValueExがDisplayNameなどの属性を取得する動作をモック化
+        query_value_responses = [
+            # AppA (Python 3.10)
+            ("Python 3.10", winreg.REG_SZ),      # DisplayName
+            ("3.10.5", winreg.REG_SZ),           # DisplayVersion
+            ("Python Software Foundation", winreg.REG_SZ), # Publisher
+            ("C:\\Python310", winreg.REG_SZ),    # InstallLocation
+            ("C:\\Python310\\uninstall.exe", winreg.REG_SZ), # UninstallString
+            
+            # AppB (Google Chrome)
+            ("Google Chrome", winreg.REG_SZ),    # DisplayName
+            ("100.0", winreg.REG_SZ),            # DisplayVersion
+            ("Google LLC", winreg.REG_SZ),       # Publisher
+            ("C:\\Chrome", winreg.REG_SZ),       # InstallLocation
+            OSError("No UninstallString"),       # UninstallString (存在しないエラー)
+            
+            # AppC (Slack)
+            ("Slack", winreg.REG_SZ),            # DisplayName
+            ("4.25.0", winreg.REG_SZ),           # DisplayVersion
+            ("Slack Technologies", winreg.REG_SZ), # Publisher
+            ("C:\\Slack", winreg.REG_SZ),        # InstallLocation
+            ("C:\\Slack\\uninstall.exe", winreg.REG_SZ), # UninstallString
+        ]
+        
+        mock_query_value.side_effect = query_value_responses
+
+        from tools import get_installed_applications
+        
+        # 1. フィルタなしで全件取得
+        apps = get_installed_applications()
+        self.assertEqual(len(apps), 3)
+        self.assertEqual(apps[0]["name"], "Google Chrome")
+        self.assertEqual(apps[0]["uninstall_string"], None)  # エラー発生によりNoneとなる
+        self.assertEqual(apps[1]["name"], "Python 3.10")
+        self.assertEqual(apps[2]["name"], "Slack")
+        
+        # 2. フィルタありで取得
+        mock_query_info_key.side_effect = [(1, 0, 0)]  # HKLMのみ
+        mock_open_key.side_effect = [
+            mock_key_handle,  # HKLM
+            mock_key_handle,  # AppA subkey
+            OSError("HKCU not found"),
+            OSError("Wow6432Node not found"),
+        ]
+        mock_enum_key.side_effect = ["AppA_Key"]
+        mock_query_value.side_effect = [
+            ("Python 3.10", winreg.REG_SZ),      # DisplayName
+            ("3.10.5", winreg.REG_SZ),           # DisplayVersion
+            ("Python Software Foundation", winreg.REG_SZ), # Publisher
+            ("C:\\Python310", winreg.REG_SZ),    # InstallLocation
+            ("C:\\Python310\\uninstall.exe", winreg.REG_SZ), # UninstallString
+        ]
+        
+        filtered_apps = get_installed_applications(name_contains="python")
+        self.assertEqual(len(filtered_apps), 1)
+        self.assertEqual(filtered_apps[0]["name"], "Python 3.10")
+
+
 if __name__ == "__main__":
     unittest.main()
