@@ -2,17 +2,17 @@
 
 GET_WINDOWS_SCHEMA = {
     "name": "get_windows",
-    "description": "起動中のウィンドウ一覧を取得する。操作対象アプリのハンドルを確認する際に最初に呼ぶ。",
+    "description": "Retrieve a list of active windows. This should be called first to check the handle of the target application.",
     "parameters": {
         "type": "object",
         "properties": {
             "title_contains": {
                 "type": "string",
-                "description": "ウィンドウタイトルの部分一致フィルタ（省略可）"
+                "description": "Partial match filter for window titles (optional)."
             },
             "process_name": {
                 "type": "string",
-                "description": "プロセス名フィルタ（例: notepad.exe）"
+                "description": "Process name filter (e.g., notepad.exe)."
             }
         }
     }
@@ -20,17 +20,17 @@ GET_WINDOWS_SCHEMA = {
 
 FOCUS_WINDOW_SCHEMA = {
     "name": "focus_window",
-    "description": "指定ウィンドウを最前面に移動してフォーカスを当てる。操作前に呼ぶことを推奨。",
+    "description": "Bring the specified window to the foreground and focus it. Recommended to call before performing actions.",
     "parameters": {
         "type": "object",
         "properties": {
             "window_handle": {
                 "type": "integer",
-                "description": "ウィンドウハンドル"
+                "description": "Window handle (HWND)."
             },
             "restore_if_minimized": {
                 "type": "boolean",
-                "description": "最小化されている場合に復元するか（デフォルト: true）",
+                "description": "Whether to restore the window if it is minimized (default: true).",
                 "default": True
             }
         }
@@ -39,21 +39,21 @@ FOCUS_WINDOW_SCHEMA = {
 
 GET_UI_TREE_SCHEMA = {
     "name": "get_ui_tree",
-    "description": "指定ウィンドウのUI要素ツリーをJSONで取得する。操作前に呼び出してUI構造を把握する。",
+    "description": "Get the UI element tree of the specified window in JSON format. Call before actions to understand the UI structure.",
     "parameters": {
         "type": "object",
         "properties": {
             "window_title": {
                 "type": "string",
-                "description": "ウィンドウタイトル（部分一致）"
+                "description": "Window title (partial match)."
             },
             "window_handle": {
                 "type": "integer",
-                "description": "ウィンドウハンドル（get_windows で取得）"
+                "description": "Window handle (obtained via get_windows)."
             },
             "depth": {
                 "type": "integer",
-                "description": "取得階層の深さ（デフォルト3、最大10）",
+                "description": "Depth of the hierarchy to retrieve (default: 3, max: 10).",
                 "default": 3
             }
         }
@@ -62,26 +62,26 @@ GET_UI_TREE_SCHEMA = {
 
 FIND_ELEMENT_SCHEMA = {
     "name": "find_element",
-    "description": "UI要素を条件で検索して返す。get_ui_tree でツリー構造を確認した後に、操作対象を特定する際に使う。",
+    "description": "Search for UI elements matching specific conditions. Used to locate target elements after inspecting the tree structure with get_ui_tree.",
     "parameters": {
         "type": "object",
         "properties": {
             "window_handle": {
                 "type": "integer",
-                "description": "ウィンドウハンドル"
+                "description": "Window handle."
             },
             "conditions": {
                 "type": "object",
-                "description": "検索条件（control_type, name, name_contains, automation_id 等）"
+                "description": "Search conditions (e.g., control_type, name, name_contains, automation_id, etc.)."
             },
             "find_all": {
                 "type": "boolean",
-                "description": "全件返却するか（デフォルト: false）",
+                "description": "Whether to return all matching elements (default: false).",
                 "default": False
             },
             "timeout": {
                 "type": "number",
-                "description": "要素出現待機秒数（デフォルト: 5.0）",
+                "description": "Seconds to wait for the element to appear (default: 5.0).",
                 "default": 5.0
             }
         },
@@ -91,25 +91,82 @@ FIND_ELEMENT_SCHEMA = {
 
 DO_ACTION_SCHEMA = {
     "name": "do_action",
-    "description": "UI要素に対して操作（クリック・テキスト入力・選択等）を実行する。",
+    "description": "Perform an action (click, type text, select, etc.) on a UI element.",
     "parameters": {
         "type": "object",
         "properties": {
             "handle": {
                 "type": "integer",
-                "description": "操作対象要素のハンドル（get_ui_tree または find_element で取得）"
+                "description": "Handle of the target UI element (obtained via get_ui_tree or find_element)."
             },
             "action": {
                 "type": "string",
-                "description": "アクション種別（click/double_click/right_click/type_text/select/check/uncheck/scroll/key_press/set_value 等）"
+                "description": (
+                    "Action type. Supported values are:\n"
+                    "- click: Click the element\n"
+                    "- double_click: Double-click the element\n"
+                    "- right_click: Right-click the element\n"
+                    "- type_text: Type text into the element\n"
+                    "- clear: Clear the text input field\n"
+                    "- select: Select an item (for combo boxes, etc.)\n"
+                    "- check: Check a checkbox or radio button\n"
+                    "- uncheck: Uncheck a checkbox\n"
+                    "- scroll: Scroll the element\n"
+                    "- hover: Hover the mouse over the element\n"
+                    "- key_press: Send special keys or shortcuts\n"
+                    "- invoke: Execute the UIA Invoke pattern (e.g., button press)\n"
+                    "- expand: Expand the element (for tree views, combo boxes, etc.)\n"
+                    "- collapse: Collapse the element (for tree views, combo boxes, etc.)\n"
+                    "- set_value: Directly set the value of an edit control\n"
+                    "- type_text_background: Type text in background using SendMessage\n"
+                    "- key_press_background: Press a key in background using SendMessage"
+                )
             },
             "params": {
                 "type": "object",
-                "description": "アクション固有パラメータ（type_text なら text と clear_first 等）"
+                "description": (
+                    "Action-specific parameters. Specify the following keys depending on the action:\n"
+                    "- click, double_click, right_click:\n"
+                    "  - x_offset (integer): X offset from the element center (pixels)\n"
+                    "  - y_offset (integer): Y offset from the element center (pixels)\n"
+                    "- type_text:\n"
+                    "  - text (string): Text string to type\n"
+                    "  - clear_first (boolean): Whether to clear the existing text first (default: true)\n"
+                    "  - with_enter (boolean): Whether to press Enter after typing (default: false)\n"
+                    "- select:\n"
+                    "  - value (string): Value of the item to select\n"
+                    "  - index (integer): Zero-based index of the item to select\n"
+                    "- scroll:\n"
+                    "  - direction (string): Scroll direction ('up', 'down', 'left', 'right'; default: 'down')\n"
+                    "  - amount (integer): Scroll amount (default: 3)\n"
+                    "- hover:\n"
+                    "  - duration (number): Hover duration in seconds (default: 0.0)\n"
+                    "- key_press:\n"
+                    "  - keys (string): Key string to send (e.g., '{ENTER}', '^a{BACKSPACE}', 'F5', pywinauto format)\n"
+                    "- set_value:\n"
+                    "  - value (string): Value to set directly\n"
+                    "- type_text_background:\n"
+                    "  - text (string): Text string to type in background\n"
+                    "- key_press_background:\n"
+                    "  - vk_code (integer): Virtual key code to send in background\n"
+                    "  - key (string): Key name ('enter', 'tab', 'escape', 'backspace')"
+                )
             },
             "verify": {
                 "type": "object",
-                "description": "操作後の検証条件（省略可）"
+                "description": (
+                    "Verification conditions after performing the action (optional). Supported keys:\n"
+                    "- expect (string): Expected verification outcome, one of:\n"
+                    "  - 'element_appears': Wait for a new UI element matching conditions to appear\n"
+                    "  - 'element_disappears': Wait for the target element to hide or disappear\n"
+                    "  - 'value_changes': Wait for the value of the target element to match the expected value\n"
+                    "  - 'window_closes': Wait for the top-level window of the target element to close\n"
+                    "- timeout (number): Verification timeout in seconds (default: 5.0)\n"
+                    "- value (any): Expected value when expect is 'value_changes'\n"
+                    "- control_type (string): control_type of the element to appear when expect is 'element_appears'\n"
+                    "- name (string): name of the element to appear when expect is 'element_appears'\n"
+                    "- name_contains (string): substring in the name of the element to appear when expect is 'element_appears'"
+                )
             }
         },
         "required": ["handle", "action"]
@@ -118,17 +175,17 @@ DO_ACTION_SCHEMA = {
 
 START_APPLICATION_SCHEMA = {
     "name": "start_application",
-    "description": "指定されたコマンドラインでプログラムを起動する。起動したプロセスのIDとプロセス名を返す。",
+    "description": "Start a program with the specified command line. Returns the process ID and process name of the launched application.",
     "parameters": {
         "type": "object",
         "properties": {
             "cmd_line": {
                 "type": "string",
-                "description": "起動するプログラムのコマンドライン（例: notepad.exe）"
+                "description": "Command line to launch the program (e.g., notepad.exe)."
             },
             "timeout": {
                 "type": "number",
-                "description": "起動待機秒数（デフォルト: 5.0）",
+                "description": "Seconds to wait for the program to launch (default: 5.0).",
                 "default": 5.0
             }
         },
@@ -138,13 +195,13 @@ START_APPLICATION_SCHEMA = {
 
 GET_INSTALLED_APPLICATIONS_SCHEMA = {
     "name": "get_installed_applications",
-    "description": "インストール済みのアプリケーション一覧を取得する。アプリ名で部分一致検索することも可能。",
+    "description": "Retrieve a list of installed applications. Supports case-insensitive partial match filtering by application name.",
     "parameters": {
         "type": "object",
         "properties": {
             "name_contains": {
                 "type": "string",
-                "description": "アプリケーション名の部分一致フィルタ（大文字・小文字を区別しない、省略可）"
+                "description": "Case-insensitive partial match filter for the application name (optional)."
             }
         }
     }

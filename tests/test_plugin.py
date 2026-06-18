@@ -158,7 +158,7 @@ class TestGUIPlugin(unittest.TestCase):
         self.assertTrue(result["success"])
         self.assertEqual(result["process_id"], 9876)
         self.assertEqual(result["process_name"], "notepad.exe")
-        mock_popen.assert_called_once_with("notepad.exe", shell=True)
+        mock_popen.assert_called_once_with("notepad.exe", shell=False)
 
     @patch("winreg.OpenKey")
     @patch("winreg.QueryInfoKey")
