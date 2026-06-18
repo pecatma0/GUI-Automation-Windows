@@ -62,8 +62,7 @@ Searches for currently open windows.
       "process_id": 12345,
       "process_name": "notepad.exe",
       "visible": true,
-      "minimized": false,
-      "rect": { "x": 100, "y": 50, "width": 800, "height": 600 }
+      "minimized": false
     }
   ]
   ```

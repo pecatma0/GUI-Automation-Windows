@@ -144,6 +144,24 @@ def _get_cached_element(element_id: int) -> UIAWrapper:
 # ==========================================
 # 5. Serialization & Tree Builders
 # ==========================================
+def _get_element_info_property(element: UIAWrapper, prop_name: str, default: Any = "") -> Any:
+    """UIAWrapperのelement_infoからプロパティを安全に取得する。"""
+    try:
+        val = getattr(element.element_info, prop_name)
+        return val if val is not None else default
+    except Exception:
+        return default
+
+
+def _call_element_method(element: UIAWrapper, method_name: str, default: Any) -> Any:
+    """UIAWrapperのメソッドを安全に呼び出す。"""
+    try:
+        method = getattr(element, method_name)
+        return method()
+    except Exception:
+        return default
+
+
 def _serialize_element(element: UIAWrapper) -> dict[str, Any]:
     """UIAWrapper要素をシリアル化する。"""
     try:
@@ -159,35 +177,13 @@ def _serialize_element(element: UIAWrapper) -> dict[str, Any]:
 
     virtual_handle = _register_element(element)
 
-    try:
-        control_type = element.element_info.control_type or "Unknown"
-    except Exception:
-        control_type = "Unknown"
+    control_type = _get_element_info_property(element, "control_type", "Unknown")
+    name = _get_element_info_property(element, "name", "")
+    automation_id = _get_element_info_property(element, "automation_id", "")
+    class_name = _get_element_info_property(element, "class_name", "")
 
-    try:
-        name = element.element_info.name or ""
-    except Exception:
-        name = ""
-
-    try:
-        automation_id = element.element_info.automation_id or ""
-    except Exception:
-        automation_id = ""
-
-    try:
-        class_name = element.element_info.class_name or ""
-    except Exception:
-        class_name = ""
-
-    try:
-        enabled = element.is_enabled()
-    except Exception:
-        enabled = False
-
-    try:
-        visible = element.is_visible()
-    except Exception:
-        visible = False
+    enabled = _call_element_method(element, "is_enabled", False)
+    visible = _call_element_method(element, "is_visible", False)
 
     value = None
     try:
@@ -266,19 +262,6 @@ def get_windows(
                 if process_name and process_name.lower() not in proc_name.lower():
                     return True
 
-                rect = {"x": 0, "y": 0, "width": 0, "height": 0}
-                if win32gui.IsWindow(hwnd):
-                    try:
-                        left, top, right, bottom = win32gui.GetWindowRect(hwnd)
-                        rect = {
-                            "x": left,
-                            "y": top,
-                            "width": right - left,
-                            "height": bottom - top,
-                        }
-                    except Exception:
-                        pass
-
                 is_minimized = win32gui.IsIconic(hwnd) != 0
 
                 windows.append({
@@ -288,7 +271,6 @@ def get_windows(
                     "process_name": proc_name,
                     "visible": win32gui.IsWindowVisible(hwnd) != 0,
                     "minimized": is_minimized,
-                    "rect": rect,
                 })
             except Exception as ex:
                 logger.warning(f"enum_windows_callback error for hwnd {hwnd}: {ex}")
@@ -510,29 +492,17 @@ def do_action(
         raise BackendError(f"要素の状態検証中にエラーが発生しました: {str(e)}")
 
     try:
-        if action == "click":
+        if action in ("click", "double_click", "right_click"):
             x = cast(int, params.get("x_offset", 0))
             y = cast(int, params.get("y_offset", 0))
-            if x != 0 or y != 0:
-                uia_element.click_input(coords=(x, y))
-            else:
-                uia_element.click_input()
-                
-        elif action == "double_click":
-            x = cast(int, params.get("x_offset", 0))
-            y = cast(int, params.get("y_offset", 0))
-            if x != 0 or y != 0:
-                uia_element.double_click_input(coords=(x, y))
-            else:
-                uia_element.double_click_input()
-                
-        elif action == "right_click":
-            x = cast(int, params.get("x_offset", 0))
-            y = cast(int, params.get("y_offset", 0))
-            if x != 0 or y != 0:
-                uia_element.right_click_input(coords=(x, y))
-            else:
-                uia_element.right_click_input()
+            coords = (x, y) if (x != 0 or y != 0) else None
+            
+            if action == "click":
+                uia_element.click_input(coords=coords) if coords else uia_element.click_input()
+            elif action == "double_click":
+                uia_element.double_click_input(coords=coords) if coords else uia_element.double_click_input()
+            elif action == "right_click":
+                uia_element.right_click_input(coords=coords) if coords else uia_element.right_click_input()
 
         elif action == "type_text":
             text = cast(str, params.get("text", ""))
@@ -826,6 +796,13 @@ def get_installed_applications(name_contains: str | None = None) -> list[dict[st
 
     apps_dict: dict[str, dict[str, Any]] = {}
 
+    def _get_registry_value(sub_key: Any, val_name: str) -> Any:
+        try:
+            val, _ = winreg.QueryValueEx(sub_key, val_name)
+            return val
+        except OSError:
+            return None
+
     for root_key, sub_key_path in registry_targets:
         try:
             # winreg.KEY_READ | winreg.KEY_WOW64_64KEY を指定することで、
@@ -854,29 +831,10 @@ def get_installed_applications(name_contains: str | None = None) -> list[dict[st
                                 continue
 
                             # その他の情報を取得（存在しない場合はNone）
-                            version = None
-                            try:
-                                version, _ = winreg.QueryValueEx(sub_key, "DisplayVersion")
-                            except OSError:
-                                pass
-
-                            publisher = None
-                            try:
-                                publisher, _ = winreg.QueryValueEx(sub_key, "Publisher")
-                            except OSError:
-                                pass
-
-                            install_location = None
-                            try:
-                                install_location, _ = winreg.QueryValueEx(sub_key, "InstallLocation")
-                            except OSError:
-                                pass
-
-                            uninstall_string = None
-                            try:
-                                uninstall_string, _ = winreg.QueryValueEx(sub_key, "UninstallString")
-                            except OSError:
-                                pass
+                            version = _get_registry_value(sub_key, "DisplayVersion")
+                            publisher = _get_registry_value(sub_key, "Publisher")
+                            install_location = _get_registry_value(sub_key, "InstallLocation")
+                            uninstall_string = _get_registry_value(sub_key, "UninstallString")
 
                             # 重複はDisplayNameをキーとして排除。最初に見つかったものを優先し、上書きしない
                             if name not in apps_dict:

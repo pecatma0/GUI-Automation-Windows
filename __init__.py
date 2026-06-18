@@ -1,3 +1,5 @@
+import os
+from pathlib import Path
 import json
 from . import tools
 from .schemas import (
@@ -92,7 +94,7 @@ def register(ctx):
         toolset="gui_automation",
         schema=GET_WINDOWS_SCHEMA,
         handler=handle_get_windows,
-        description="起動中のウィンドウ一覧を取得する。"
+        description="Use this tool when you need to retrieve a list of currently open visible windows to find the target window's handle or title. It provides window handles, titles, and process names. Returns a JSON string with 'success': true and the list of 'windows', or 'success': false with an 'error' message."
     )
 
     ctx.register_tool(
@@ -100,7 +102,7 @@ def register(ctx):
         toolset="gui_automation",
         schema=FOCUS_WINDOW_SCHEMA,
         handler=handle_focus_window,
-        description="指定ウィンドウを最前面に移動してフォーカスを当てる。"
+        description="Use this tool to bring a specific window to the foreground and focus it before performing GUI operations. Returns a JSON string with 'success': true if the window is focused successfully, or 'success': false with an 'error' message."
     )
 
     ctx.register_tool(
@@ -108,7 +110,7 @@ def register(ctx):
         toolset="gui_automation",
         schema=GET_UI_TREE_SCHEMA,
         handler=handle_get_ui_tree,
-        description="指定ウィンドウのUI要素ツリーをJSONで取得する。"
+        description="Use this tool to fetch the hierarchical UI element tree of a window to analyze its components (e.g., buttons, text boxes). Returns a JSON string containing the structured element tree under 'success': true, or 'success': false with an 'error' message."
     )
 
     ctx.register_tool(
@@ -116,7 +118,7 @@ def register(ctx):
         toolset="gui_automation",
         schema=FIND_ELEMENT_SCHEMA,
         handler=handle_find_element,
-        description="UI要素を条件で検索して返す。"
+        description="Use this tool to search for specific UI elements within a window based on matching criteria (like class name, automation ID, or name). Returns a JSON string containing details of the matched element(s) with 'success': true, or 'success': false with an 'error' message."
     )
 
     ctx.register_tool(
@@ -124,7 +126,7 @@ def register(ctx):
         toolset="gui_automation",
         schema=DO_ACTION_SCHEMA,
         handler=handle_do_action,
-        description="UI要素に対して操作を実行する。"
+        description="Use this tool to interact with a specific UI element (e.g., click, type text, select item) using its element handle. Returns a JSON string with 'success': true if the action completes and verifies successfully, or 'success': false with an 'error' message."
     )
 
     ctx.register_tool(
@@ -132,7 +134,7 @@ def register(ctx):
         toolset="gui_automation",
         schema=START_APPLICATION_SCHEMA,
         handler=handle_start_application,
-        description="指定されたコマンドラインでプログラムを起動する。"
+        description="Use this tool to launch a Windows application or command line process. Returns a JSON string with 'success': true and process info (like PID or window handle) if launched, or 'success': false with an 'error' message."
     )
 
     ctx.register_tool(
@@ -140,6 +142,16 @@ def register(ctx):
         toolset="gui_automation",
         schema=GET_INSTALLED_APPLICATIONS_SCHEMA,
         handler=handle_get_installed_applications,
-        description="インストール済みのアプリケーション一覧を取得する。"
+        description="Use this tool to search for installed programs on the system, optionally filtering by name. Returns a JSON string with 'success': true and a list of matching 'applications' (names and paths), or 'success': false with an 'error' message."
     )
+
+    current_dir = Path(os.path.dirname(__file__))
+    skill_path = current_dir / "skills" / "SKILL.md"
+    if skill_path.exists():
+        ctx.register_skill(
+            name="gui-automation",
+            path=skill_path,
+            description="Windows GUI Automation skill guide."
+        )
+
 

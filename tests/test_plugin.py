@@ -47,8 +47,6 @@ class TestGUIPlugin(unittest.TestCase):
         mock_proc_instance.name.return_value = "notepad.exe"
         mock_process.return_value = mock_proc_instance
         
-        mock_get_rect.return_value = (10, 10, 110, 110)
-
         # EnumWindowsがコールバックを呼び出すように擬似実装
         def enum_impl(callback: object, extra: object) -> None:
             func = cast(Any, callback)
@@ -63,7 +61,6 @@ class TestGUIPlugin(unittest.TestCase):
         self.assertEqual(windows[0]["title"], "テストメモ帳")
         self.assertEqual(windows[0]["handle"], 10001)
         self.assertEqual(windows[0]["process_name"], "notepad.exe")
-        self.assertEqual(windows[0]["rect"], {"x": 10, "y": 10, "width": 100, "height": 100})
 
     @patch("win32gui.IsWindow")
     @patch("win32gui.ShowWindow")

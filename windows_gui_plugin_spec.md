@@ -252,8 +252,7 @@ def get_windows(
   "process_id": 6789,
   "process_name": "notepad.exe",
   "visible": true,
-  "minimized": false,
-  "rect": { "x": 100, "y": 50, "width": 800, "height": 600 }
+  "minimized": false
 }
 ```
 
