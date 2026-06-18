@@ -598,6 +598,44 @@ def do_action(
                 raise InvalidParamsError("key_press アクションには keys パラメータが必要です。")
             uia_element.type_keys(keys, set_foreground=False)
 
+        elif action == "type_text_background":
+            text = cast(str, params.get("text", ""))
+            if not text:
+                raise InvalidParamsError("type_text_background アクションには text パラメータが必要です。")
+            hwnd = uia_element.handle
+            if not hwnd or not win32gui.IsWindow(hwnd):
+                raise BackendError("有効なウィンドウハンドル(HWND)を取得できませんでした。")
+            WM_CHAR = 0x0102
+            for char in text:
+                win32gui.SendMessage(hwnd, WM_CHAR, ord(char), 0)
+                time.sleep(0.01)
+
+        elif action == "key_press_background":
+            vk_code = params.get("vk_code")
+            key_name = params.get("key")
+            hwnd = uia_element.handle
+            if not hwnd or not win32gui.IsWindow(hwnd):
+                raise BackendError("有効なウィンドウハンドル(HWND)を取得できませんでした。")
+            vk = None
+            if vk_code is not None:
+                vk = cast(int, vk_code)
+            elif key_name:
+                key_name_lower = str(key_name).lower()
+                if key_name_lower == "enter":
+                    vk = win32con.VK_RETURN
+                elif key_name_lower == "tab":
+                    vk = win32con.VK_TAB
+                elif key_name_lower == "escape":
+                    vk = win32con.VK_ESCAPE
+                elif key_name_lower == "backspace":
+                    vk = win32con.VK_BACK
+                else:
+                    raise InvalidParamsError(f"サポートされていないキー名です: {key_name}")
+            else:
+                raise InvalidParamsError("key_press_background アクションには vk_code または key パラメータが必要です。")
+            win32gui.SendMessage(hwnd, win32con.WM_KEYDOWN, vk, 0)
+            win32gui.SendMessage(hwnd, win32con.WM_KEYUP, vk, 0)
+
         elif action == "invoke":
             if hasattr(uia_element, "invoke"):
                 uia_element.invoke()
@@ -731,7 +769,7 @@ def start_application(cmd_line: str, timeout: float = 5.0) -> dict[str, Any]:
     start_time = time.time()
     try:
         import subprocess
-        proc = subprocess.Popen(cmd_line, shell=True)
+        proc = subprocess.Popen(cmd_line, shell=False)
         pid = proc.pid
         
         time.sleep(0.5)
