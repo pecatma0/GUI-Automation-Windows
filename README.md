@@ -14,7 +14,7 @@ Hermes Agent に Windows GUI 操作能力を付与するためのプラグイン
 ---
 
 ## 動作要件
-
+- **Hermes Agent:** v0.16.0 (2026.6.5)
 - **OS:** Windows 10 / 11
 - **Python:** 3.13+
 - **依存ライブラリ:**
@@ -30,7 +30,8 @@ Hermes Agent に Windows GUI 操作能力を付与するためのプラグイン
 ## hermesへプラグインとしてのセットアップ手順
 
 ## 1. gui-automation フォルダをコピー
-`hermes` の `plugins` フォルダへ `gui_plugin` フォルダをコピーします。
+`hermes` の `plugins` フォルダへ `gui-automation` フォルダを作成。Gitのファイルを以下へコピー
+
 **コピー先**
 ```text
 C:\Users\<UserName>\AppData\Local\hermes\plugins
@@ -39,6 +40,7 @@ C:\Users\<UserName>\AppData\Local\hermes\plugins
 
 ## 2. 仮想環境の作成（未作成の場合）
 `hermes-agent` 配下に仮想環境 (`venv`) が存在しない場合は作成します。
+
 **作業ディレクトリ**
 ```text
 C:\Users\<UserName>\AppData\Local\hermes\hermes-agent
@@ -66,6 +68,7 @@ C:\Users\<UserName>\AppData\Local\hermes\hermes-agent\venv\Scripts\python.exe -m
 
 ## 5. プラグインを有効化
 以下の設定ファイルを編集します。
+
 **設定ファイル**
 ```text
 C:\Users\<UserName>\AppData\Local\hermes\config.yaml
