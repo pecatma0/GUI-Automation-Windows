@@ -39,7 +39,7 @@ FOCUS_WINDOW_SCHEMA = {
 
 GET_UI_TREE_SCHEMA = {
     "name": "get_ui_tree",
-    "description": "Get the UI element tree of the specified window in JSON format. Call before actions to understand the UI structure.",
+    "description": "Get the UI element tree of the specified window or element. Call before actions to understand the UI structure. You can specify a range of depths or start from a specific element handle. Note: Element coordinates (rect) are not included in the tree. To obtain rect, call find_element instead.",
     "parameters": {
         "type": "object",
         "properties": {
@@ -51,9 +51,18 @@ GET_UI_TREE_SCHEMA = {
                 "type": "integer",
                 "description": "Window handle (obtained via get_windows)."
             },
-            "depth": {
+            "element_handle": {
                 "type": "integer",
-                "description": "Depth of the hierarchy to retrieve (default: 3, max: 10).",
+                "description": "Element handle to start traversing from (obtained via get_ui_tree or find_element)."
+            },
+            "min_depth": {
+                "type": "integer",
+                "description": "Minimum depth to start serializing properties. Nodes shallower than this will be output as placeholder nodes containing only handles and children (default: 0).",
+                "default": 0
+            },
+            "max_depth": {
+                "type": "integer",
+                "description": "Maximum depth of the hierarchy to retrieve (default: 3, max: 10).",
                 "default": 3
             }
         }
@@ -62,7 +71,7 @@ GET_UI_TREE_SCHEMA = {
 
 FIND_ELEMENT_SCHEMA = {
     "name": "find_element",
-    "description": "Search for UI elements matching specific conditions. Used to locate target elements after inspecting the tree structure with get_ui_tree.",
+    "description": "Search for UI elements matching specific conditions. Used to locate target elements and obtain their screen coordinates (rect) after inspecting the tree structure with get_ui_tree.",
     "parameters": {
         "type": "object",
         "properties": {

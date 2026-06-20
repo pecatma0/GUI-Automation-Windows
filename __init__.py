@@ -20,8 +20,10 @@ def handle_get_windows(params, **kwargs):
         process_name = params.get("process_name")
         res = tools.get_windows(title_contains=title_contains, process_name=process_name)
         return json.dumps({"success": True, "windows": res}, ensure_ascii=False)
+    except tools.GUIPluginError as e:
+        return json.dumps({"success": False, "error": e.message, "error_code": e.error_code}, ensure_ascii=False)
     except Exception as e:
-        return json.dumps({"success": False, "error": str(e)}, ensure_ascii=False)
+        return json.dumps({"success": False, "error": str(e), "error_code": "UNKNOWN_ERROR"}, ensure_ascii=False)
 
 def handle_focus_window(params, **kwargs):
     """Bring the specified window to the foreground and focus it."""
@@ -30,19 +32,31 @@ def handle_focus_window(params, **kwargs):
         restore_if_minimized = params.get("restore_if_minimized", True)
         res = tools.focus_window(window_handle=window_handle, restore_if_minimized=restore_if_minimized)
         return json.dumps(res, ensure_ascii=False)
+    except tools.GUIPluginError as e:
+        return json.dumps({"success": False, "error": e.message, "error_code": e.error_code}, ensure_ascii=False)
     except Exception as e:
-        return json.dumps({"success": False, "error": str(e)}, ensure_ascii=False)
+        return json.dumps({"success": False, "error": str(e), "error_code": "UNKNOWN_ERROR"}, ensure_ascii=False)
 
 def handle_get_ui_tree(params, **kwargs):
     """Get the UI element tree of the specified window."""
     try:
         window_title = params.get("window_title")
         window_handle = params.get("window_handle")
-        depth = params.get("depth", 3)
-        res = tools.get_ui_tree(window_title=window_title, window_handle=window_handle, depth=depth)
+        element_handle = params.get("element_handle")
+        min_depth = params.get("min_depth", 0)
+        max_depth = params.get("max_depth", 3)
+        res = tools.get_ui_tree(
+            window_title=window_title,
+            window_handle=window_handle,
+            element_handle=element_handle,
+            min_depth=min_depth,
+            max_depth=max_depth
+        )
         return json.dumps(res, ensure_ascii=False)
+    except tools.GUIPluginError as e:
+        return json.dumps({"success": False, "error": e.message, "error_code": e.error_code}, ensure_ascii=False)
     except Exception as e:
-        return json.dumps({"success": False, "error": str(e)}, ensure_ascii=False)
+        return json.dumps({"success": False, "error": str(e), "error_code": "UNKNOWN_ERROR"}, ensure_ascii=False)
 
 def handle_find_element(params, **kwargs):
     """Find UI elements matching specific conditions."""
@@ -53,8 +67,10 @@ def handle_find_element(params, **kwargs):
         timeout = params.get("timeout", 5.0)
         res = tools.find_element(window_handle=window_handle, conditions=conditions, find_all=find_all, timeout=timeout)
         return json.dumps(res, ensure_ascii=False)
+    except tools.GUIPluginError as e:
+        return json.dumps({"success": False, "error": e.message, "error_code": e.error_code}, ensure_ascii=False)
     except Exception as e:
-        return json.dumps({"success": False, "error": str(e)}, ensure_ascii=False)
+        return json.dumps({"success": False, "error": str(e), "error_code": "UNKNOWN_ERROR"}, ensure_ascii=False)
 
 def handle_do_action(params, **kwargs):
     """Perform action on the specified UI element."""
@@ -65,8 +81,10 @@ def handle_do_action(params, **kwargs):
         verify = params.get("verify")
         res = tools.do_action(handle=handle, action=action, params=action_params, verify=verify)
         return json.dumps(res, ensure_ascii=False)
+    except tools.GUIPluginError as e:
+        return json.dumps({"success": False, "error": e.message, "error_code": e.error_code}, ensure_ascii=False)
     except Exception as e:
-        return json.dumps({"success": False, "error": str(e)}, ensure_ascii=False)
+        return json.dumps({"success": False, "error": str(e), "error_code": "UNKNOWN_ERROR"}, ensure_ascii=False)
 
 def handle_start_application(params, **kwargs):
     """Launch application with the specified command line."""
@@ -75,8 +93,10 @@ def handle_start_application(params, **kwargs):
         timeout = params.get("timeout", 5.0)
         res = tools.start_application(cmd_line=cmd_line, timeout=timeout)
         return json.dumps(res, ensure_ascii=False)
+    except tools.GUIPluginError as e:
+        return json.dumps({"success": False, "error": e.message, "error_code": e.error_code}, ensure_ascii=False)
     except Exception as e:
-        return json.dumps({"success": False, "error": str(e)}, ensure_ascii=False)
+        return json.dumps({"success": False, "error": str(e), "error_code": "UNKNOWN_ERROR"}, ensure_ascii=False)
 
 def handle_get_installed_applications(params, **kwargs):
     """Retrieve list of installed applications."""
@@ -84,8 +104,10 @@ def handle_get_installed_applications(params, **kwargs):
         name_contains = params.get("name_contains")
         res = tools.get_installed_applications(name_contains=name_contains)
         return json.dumps({"success": True, "applications": res}, ensure_ascii=False)
+    except tools.GUIPluginError as e:
+        return json.dumps({"success": False, "error": e.message, "error_code": e.error_code}, ensure_ascii=False)
     except Exception as e:
-        return json.dumps({"success": False, "error": str(e)}, ensure_ascii=False)
+        return json.dumps({"success": False, "error": str(e), "error_code": "UNKNOWN_ERROR"}, ensure_ascii=False)
 
 def register(ctx):
     """Register tools to Hermes Agent context."""

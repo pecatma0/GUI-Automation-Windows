@@ -164,17 +164,6 @@ def _call_element_method(element: UIAWrapper, method_name: str, default: Any) ->
 
 def _serialize_element(element: UIAWrapper) -> dict[str, Any]:
     """UIAWrapper要素をシリアル化する。"""
-    try:
-        rect = element.rectangle()
-        rect_dict = {
-            "x": rect.left,
-            "y": rect.top,
-            "width": rect.width(),
-            "height": rect.height(),
-        }
-    except Exception:
-        rect_dict = {"x": 0, "y": 0, "width": 0, "height": 0}
-
     virtual_handle = _register_element(element)
 
     control_type = _get_element_info_property(element, "control_type", "Unknown")
@@ -202,14 +191,21 @@ def _serialize_element(element: UIAWrapper) -> dict[str, Any]:
         "handle": virtual_handle,
         "enabled": enabled,
         "visible": visible,
-        "rect": rect_dict,
         "value": value,
         "children": [],
     }
 
-def _build_tree(element: UIAWrapper, current_depth: int, max_depth: int, include_invisible: bool) -> dict[str, Any]:
+def _build_tree(element: UIAWrapper, current_depth: int, min_depth: int, max_depth: int, include_invisible: bool) -> dict[str, Any]:
     """再帰的に子要素を探索してツリーを構築する。"""
-    node = _serialize_element(element)
+    if current_depth < min_depth:
+        virtual_handle = _register_element(element)
+        node = {
+            "control_type": "Placeholder",
+            "handle": virtual_handle,
+            "children": [],
+        }
+    else:
+        node = _serialize_element(element)
     
     if current_depth >= max_depth:
         return node
@@ -223,7 +219,7 @@ def _build_tree(element: UIAWrapper, current_depth: int, max_depth: int, include
         try:
             if not include_invisible and not child.is_visible():
                 continue
-            child_node = _build_tree(child, current_depth + 1, max_depth, include_invisible)
+            child_node = _build_tree(child, current_depth + 1, min_depth, max_depth, include_invisible)
             node["children"].append(child_node)
         except Exception:
             pass
@@ -241,6 +237,8 @@ def get_windows(
     """起動中のウィンドウ一覧を取得する。"""
     try:
         windows: list[dict[str, Any]] = []
+        # PIDからプロセス名へのキャッシュ
+        pid_to_name: dict[int, str] = {}
 
         def enum_windows_callback(hwnd: int, extra: object) -> bool:
             try:
@@ -253,8 +251,12 @@ def get_windows(
 
                 try:
                     _, pid = win32process.GetWindowThreadProcessId(hwnd)
-                    proc = psutil.Process(pid)
-                    proc_name = proc.name()
+                    if pid in pid_to_name:
+                        proc_name = pid_to_name[pid]
+                    else:
+                        proc = psutil.Process(pid)
+                        proc_name = proc.name()
+                        pid_to_name[pid] = proc_name
                 except Exception:
                     pid = 0
                     proc_name = ""
@@ -308,9 +310,70 @@ def focus_window(
             win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
             time.sleep(0.2)
 
+        # 現在のフォアグラウンドウィンドウのスレッドIDにアタッチしてフォーカス設定権限を借用する
+        attached = False
+        this_thread_id = ctypes.windll.kernel32.GetCurrentThreadId()
+        fore_thread_id = 0
+        try:
+            fore_hwnd = win32gui.GetForegroundWindow()
+            if fore_hwnd != 0 and fore_hwnd != hwnd:
+                fore_thread_id, _ = win32process.GetWindowThreadProcessId(fore_hwnd)
+                if fore_thread_id != this_thread_id:
+                    win32process.AttachThreadInput(this_thread_id, fore_thread_id, True)
+                    attached = True
+        except Exception:
+            pass
+
         win32gui.ShowWindow(hwnd, win32con.SW_SHOW)
-        win32gui.SetForegroundWindow(hwnd)
-        time.sleep(0.3)
+        
+        # 複数回試行して確実にフォアグラウンドにする
+        success_focus = False
+        for _ in range(3):
+            try:
+                # Altキーをシミュレートしてフォアグラウンド制限を回避する
+                # VK_MENU (Altキー) = 0x12, KEYEVENTF_KEYUP = 0x0002
+                ctypes.windll.user32.keybd_event(0x12, 0, 0, 0)
+                win32gui.SetForegroundWindow(hwnd)
+                ctypes.windll.user32.keybd_event(0x12, 0, 2, 0)
+                
+                # 少し待ってアクティブウィンドウを確認
+                time.sleep(0.1)
+                if win32gui.GetForegroundWindow() == hwnd:
+                    success_focus = True
+                    break
+            except Exception:
+                time.sleep(0.1)
+
+        # アタッチした入力を解除
+        if attached:
+            try:
+                win32process.AttachThreadInput(this_thread_id, fore_thread_id, False)
+            except Exception:
+                pass
+
+        if not success_focus:
+            # 代替手段としてBringWindowToTopやSwitchToThisWindowを試みる
+            try:
+                win32gui.BringWindowToTop(hwnd)
+            except Exception:
+                pass
+            try:
+                ctypes.windll.user32.SwitchToThisWindow(hwnd, True)
+            except Exception:
+                pass
+            # 最終確認 (切り替えのタイムラグを考慮して数回リトライ)
+            final_fore = 0
+            for _ in range(5):
+                final_fore = win32gui.GetForegroundWindow()
+                if final_fore == hwnd:
+                    break
+                time.sleep(0.1)
+            
+            if final_fore != hwnd:
+                if final_fore == 0:
+                    logger.warning(f"SetForegroundWindow実行後、フォアグラウンドウィンドウが0（非対話型セッションまたはフォーカス未設定）です。警告を出力し、処理を続行します。(HWND={hwnd})")
+                else:
+                    raise AccessDeniedError(f"SetForegroundWindow実行後もウィンドウ(HWND={hwnd})がアクティブになっていません。(現在のフォアグラウンド={final_fore})")
 
         elapsed = int((time.time() - start_time) * 1000)
         return {
@@ -320,7 +383,7 @@ def focus_window(
             "elapsed_ms": elapsed,
             "error": None,
             "error_code": None,
-            "state_after": None,
+            "state_after": {},
         }
     except Exception as e:
         logger.error(f"focus_window でエラーが発生しました (HWND={hwnd}): {str(e)}")
@@ -331,44 +394,62 @@ def get_ui_tree(
     window_title: str | None = None,
     window_handle: int | None = None,
     process_name: str | None = None,
-    depth: int = 3,
+    element_handle: int | None = None,
+    min_depth: int = 0,
+    max_depth: int = 3,
     include_invisible: bool = False,
 ) -> dict[str, Any]:
-    """指定ウィンドウの UI 要素ツリーを JSON で返す。"""
-    if not (window_title or window_handle or process_name):
-        raise InvalidParamsError("window_title, window_handle, process_name のいずれか一つを必ず指定してください。")
-
-    hwnd = window_handle
-    if not hwnd:
-        wins = get_windows(title_contains=window_title, process_name=process_name, visible_only=True)
-        if not wins:
-            wins = get_windows(title_contains=window_title, process_name=process_name, visible_only=False)
-            if not wins:
-                raise WindowNotFoundError("指定された条件のウィンドウが見つかりません。")
-        hwnd = cast(int, wins[0]["handle"])
+    """指定ウィンドウまたは要素の UI 要素ツリーを JSON で返す。"""
+    if not (window_title or window_handle or process_name or element_handle):
+        raise InvalidParamsError("window_title, window_handle, process_name, element_handle のいずれか一つを必ず指定してください。")
 
     try:
-        _element_cache.clear()
+        if element_handle is not None:
+            # キャッシュから要素を取得
+            root_element = _get_cached_element(element_handle)
+        else:
+            hwnd = window_handle
+            if not hwnd:
+                wins = get_windows(title_contains=window_title, process_name=process_name, visible_only=True)
+                if not wins:
+                    wins = get_windows(title_contains=window_title, process_name=process_name, visible_only=False)
+                    if not wins:
+                        raise WindowNotFoundError("指定された条件のウィンドウが見つかりません。")
+                hwnd = cast(int, wins[0]["handle"])
 
-        app = pywinauto.Application(backend="uia").connect(handle=hwnd)
-        root_window = app.window(handle=hwnd)
-        
-        if not root_window.exists():
-            raise WindowNotFoundError("指定ハンドルに対応するウィンドウが pywinauto から検出できませんでした。")
+            _element_cache.clear()
 
+            app = pywinauto.Application(backend="uia").connect(handle=hwnd)
+            root_element = app.window(handle=hwnd)
+            
+            if not root_element.exists():
+                raise WindowNotFoundError("指定ハンドルに対応するウィンドウが pywinauto から検出できませんでした。")
+
+        # ツリーデータを構築
+        tree_data = _build_tree(root_element, 0, min_depth, max_depth, include_invisible)
+
+        # 最上位親ウィンドウ情報を取得
         win_info = None
-        for w in get_windows(visible_only=False):
-            if w["handle"] == hwnd:
-                win_info = w
-                break
-
-        tree_data = _build_tree(root_window, 0, depth, include_invisible)
+        try:
+            if element_handle is not None:
+                top_hwnd = root_element.top_level_parent().handle
+            else:
+                top_hwnd = hwnd
+            
+            for w in get_windows(visible_only=False):
+                if w["handle"] == top_hwnd:
+                    win_info = w
+                    break
+        except Exception:
+            pass
 
         return {
             "window": win_info,
             "tree": tree_data
         }
 
+    except GUIPluginError:
+        raise
     except Exception as e:
         logger.error(f"get_ui_tree でエラーが発生しました: {str(e)}")
         raise BackendError(f"UIツリーの取得に失敗しました: {str(e)}")
@@ -395,11 +476,15 @@ def find_element(
     if not hwnd:
         raise InvalidParamsError("window_handle または window_title を指定してください。")
 
+    initial_depth = cast(int, conditions.get("max_depth", conditions.get("depth", 3)))
+    current_depth = initial_depth
+    max_allowed_depth = 10
+
     start_time = time.time()
     
     while True:
         try:
-            tree_response = get_ui_tree(window_handle=hwnd, depth=cast(int, conditions.get("depth", 5)), include_invisible=True)
+            tree_response = get_ui_tree(window_handle=hwnd, max_depth=current_depth, include_invisible=True)
             root_node = tree_response["tree"]
             
             matched_nodes: list[dict[str, Any]] = []
@@ -445,10 +530,27 @@ def find_element(
             traverse_and_match(root_node)
 
             if matched_nodes:
+                for node in matched_nodes:
+                    try:
+                        uia_element = _get_cached_element(node["handle"])
+                        rect = uia_element.rectangle()
+                        node["rect"] = {
+                            "x": rect.left,
+                            "y": rect.top,
+                            "width": rect.width(),
+                            "height": rect.height(),
+                        }
+                    except Exception:
+                        node["rect"] = {"x": 0, "y": 0, "width": 0, "height": 0}
+
                 if find_all:
                     return matched_nodes
                 else:
                     return matched_nodes[0]
+
+            # 見つからなかった場合は深さを増やす
+            if current_depth < max_allowed_depth:
+                current_depth += 1
 
         except Exception as e:
             logger.warning(f"find_element 中の試行でエラー（再試行します）: {str(e)}")
@@ -456,7 +558,7 @@ def find_element(
         if time.time() - start_time > timeout:
             break
             
-        time.sleep(0.5)
+        time.sleep(0.1)
 
     raise ElementNotFoundError(f"条件 {conditions} に一致する要素がタイムアウト {timeout} 秒以内に見つかりませんでした。")
 
