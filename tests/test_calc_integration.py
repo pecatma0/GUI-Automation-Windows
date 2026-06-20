@@ -54,7 +54,7 @@ class TestCalcIntegration(unittest.TestCase):
         
         # 4. キー入力 "1234" を送信
         print("Getting UI tree to locate the root element...")
-        tree_res = tools.get_ui_tree(window_handle=hwnd, depth=1)
+        tree_res = tools.get_ui_tree(window_handle=hwnd, max_depth=1)
         root_element_handle = tree_res["tree"]["handle"]
         
         print("Sending key presses '1234'...")
@@ -73,7 +73,7 @@ class TestCalcIntegration(unittest.TestCase):
                 window_handle=hwnd,
                 conditions={
                     "automation_id": "CalculatorResults",
-                    "depth": 4
+                    "max_depth": 4
                 },
                 timeout=3.0
             )

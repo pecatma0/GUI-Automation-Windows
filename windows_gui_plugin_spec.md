@@ -81,13 +81,13 @@ Agent
   │
   ├─① get_windows()          ← 起動中アプリ一覧を取得
   │
-  ├─② get_ui_tree(depth=2)   ← UI 構造を浅く把握
+  ├─② get_ui_tree(max_depth=2)   ← UI 構造を浅く把握
   │
   ├─③ find_element(...)      ← 操作対象要素を特定
   │
   ├─④ do_action(...)         ← 操作実行 + 結果検証
   │
-  └─⑤ get_ui_tree(depth=1)  ← 操作後の状態確認
+  └─⑤ get_ui_tree(max_depth=1)  ← 操作後の状態確認
 ```
 
 ---
@@ -122,7 +122,9 @@ def get_ui_tree(
     window_title: str | None = None,
     window_handle: int | None = None,
     process_name: str | None = None,
-    depth: int = 3,
+    element_handle: int | None = None,
+    min_depth: int = 0,
+    max_depth: int = 3,
     include_invisible: bool = False,
 ) -> dict
 ```
@@ -134,10 +136,12 @@ def get_ui_tree(
 | `window_title` | str | ※1 | ウィンドウタイトル（部分一致） |
 | `window_handle` | int | ※1 | ウィンドウハンドル（HWND） |
 | `process_name` | str | ※1 | プロセス名（例: `notepad.exe`） |
-| `depth` | int | - | 取得する階層の深さ（デフォルト: 3、最大: 10） |
+| `element_handle` | int | - | 開始要素のハンドル（指定時はウィンドウ探索を行わずその要素から開始） |
+| `min_depth` | int | - | シリアライズを開始する最小階層（デフォルト: 0） |
+| `max_depth` | int | - | 取得する階層の最大深さ（デフォルト: 3、最大: 10） |
 | `include_invisible` | bool | - | 非表示要素を含めるか（デフォルト: false） |
 
-※1: `window_title` / `window_handle` / `process_name` のいずれか一つを指定すること。
+※1: `window_title` / `window_handle` / `process_name` / `element_handle` のいずれか一つを指定すること。
 
 **返却値:** [UI ツリーノード](#51-ui-ツリーノード) を参照
 
@@ -252,8 +256,7 @@ def get_windows(
   "process_id": 6789,
   "process_name": "notepad.exe",
   "visible": true,
-  "minimized": false,
-  "rect": { "x": 100, "y": 50, "width": 800, "height": 600 }
+  "minimized": false
 }
 ```
 
@@ -349,6 +352,7 @@ def get_installed_applications(
 ### 5.1 UI ツリーノード
 
 `get_ui_tree` および `find_element` の返却形式。
+※ `get_ui_tree` の返却値には `rect` は含まれません。`find_element` で要素を取得した時のみ `rect` が付与されます。
 
 ```json
 {
@@ -367,7 +371,6 @@ def get_installed_applications(
     "handle": 12345,
     "enabled": true,
     "visible": true,
-    "rect": { "x": 100, "y": 50, "width": 800, "height": 600 },
     "value": null,
     "children": [
       {
@@ -378,7 +381,6 @@ def get_installed_applications(
         "handle": 12346,
         "enabled": true,
         "visible": true,
-        "rect": { "x": 100, "y": 50, "width": 800, "height": 20 },
         "value": null,
         "children": [
           {
@@ -389,7 +391,6 @@ def get_installed_applications(
             "handle": 12347,
             "enabled": true,
             "visible": true,
-            "rect": { "x": 100, "y": 50, "width": 60, "height": 20 },
             "value": null,
             "children": []
           }
@@ -403,7 +404,6 @@ def get_installed_applications(
         "handle": 12348,
         "enabled": true,
         "visible": true,
-        "rect": { "x": 100, "y": 70, "width": 800, "height": 580 },
         "value": "現在のテキスト内容",
         "children": []
       }
@@ -423,7 +423,7 @@ def get_installed_applications(
 | `handle` | int | 要素の内部ハンドル（操作時に使用） |
 | `enabled` | bool | 操作可能かどうか |
 | `visible` | bool | 表示されているかどうか |
-| `rect` | object | 画面座標（x, y, width, height） |
+| `rect` | object | 画面座標（x, y, width, height）※`find_element`でのみ返却される |
 | `value` | string\|null | 現在の値（Edit, ComboBox 等） |
 | `children` | array | 子要素リスト |
 
@@ -638,15 +638,15 @@ def select_backend(window_class: str) -> str:
 
 ```python
 # Step 1: まず浅く構造を把握
-get_ui_tree(window_title="メモ帳", depth=2)
+get_ui_tree(window_title="メモ帳", max_depth=2)
 
 # Step 2: 操作対象が深い場合に深掘り
-get_ui_tree(window_title="メモ帳", depth=5)
+get_ui_tree(window_title="メモ帳", max_depth=5)
 ```
 
 深さの目安:
 
-| depth | 用途 |
+| max_depth | 用途 |
 |-------|------|
 | 1〜2 | ウィンドウ直下の主要コントロール把握 |
 | 3〜4 | フォーム内の入力欄・ボタン特定（標準的な用途） |
@@ -869,7 +869,7 @@ Agent の操作手順:
 
 2. focus_window(window_handle=12345)
 
-3. get_ui_tree(window_handle=12345, depth=3)
+3. get_ui_tree(window_handle=12345, max_depth=3)
    → Edit コントロール（handle: 12348）を確認
 
 4. do_action(handle=12348, action="click")
@@ -903,7 +903,7 @@ Agent の操作手順:
 ### 例 2: アプリのメニューを操作する
 
 ```
-1. get_ui_tree(window_handle=..., depth=2)
+1. get_ui_tree(window_handle=..., max_depth=2)
    → MenuBar 直下の MenuItem を確認
 
 2. find_element(window_handle=...,

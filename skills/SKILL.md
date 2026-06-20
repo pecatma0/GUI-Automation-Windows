@@ -62,8 +62,7 @@ Searches for currently open windows.
       "process_id": 12345,
       "process_name": "notepad.exe",
       "visible": true,
-      "minimized": false,
-      "rect": { "x": 100, "y": 50, "width": 800, "height": 600 }
+      "minimized": false
     }
   ]
   ```
@@ -92,11 +91,13 @@ Activates the target window and brings it to the foreground. Always perform this
   * If it fails, use `get_windows` to verify if the specified `window_handle` has already been closed.
 
 ### 2.4 `get_ui_tree` (Get UI Element Tree)
-Retrieves the elements inside a window in a tree structure.
+Retrieves the elements inside a window or below a specific element in a tree structure. To prevent huge response payloads in complex windows, you can narrow down the hierarchy scope by specifying depth ranges or starting from a sub-element.
 
 * **Primary Arguments**:
-  * `window_handle` (int, Required)
-  * `depth` (int, Default: 3): The depth of the hierarchy to retrieve.
+  * `window_handle` (int, Optional): Required if `element_handle` is not specified.
+  * `element_handle` (int, Optional): Start traversing from this specific element handle instead of the top window. Useful for drilling down into a specific panel or component.
+  * `min_depth` (int, Default: 0): Minimum depth to serialize properties. Nodes shallower than this will be placeholder nodes containing only `handle`, `control_type: "Placeholder"`, and `children`. Used to skip upper hierarchy overhead.
+  * `max_depth` (int, Default: 3): Maximum depth of the hierarchy to retrieve (max: 10).
 * **Return Value Structure**:
   ```json
   {
@@ -108,7 +109,6 @@ Retrieves the elements inside a window in a tree structure.
       "handle": 1055122,
       "enabled": true,
       "visible": true,
-      "rect": { "x": 100, "y": 50, "width": 800, "height": 600 },
       "value": null,
       "children": [
         {
@@ -118,7 +118,6 @@ Retrieves the elements inside a window in a tree structure.
           "handle": 2045612,
           "enabled": true,
           "visible": true,
-          "rect": { "x": 100, "y": 70, "width": 800, "height": 580 },
           "value": "Existing text",
           "children": []
         }
@@ -127,8 +126,8 @@ Retrieves the elements inside a window in a tree structure.
   }
   ```
 * **Agent Decisions Based on Return Value**:
-  * First, retrieve a shallow tree using `depth=2` or `3` to understand the overall layout.
-  * Only increase the `depth` and re-retrieve if the target element is not found within the `children`.
+  * First, retrieve a shallow tree using `max_depth=2` or `3` to understand the overall layout.
+  * If the response is too large or slow, use `min_depth` to skip rendering shallow nodes, or obtain the `handle` of a container component (like a Pane) and then call `get_ui_tree` with `element_handle` to get the subtree.
   * Locate the target element's `handle` to use in `do_action`. Use the `value` and `enabled` attributes to evaluate the current state of the elements.
 
 ### 2.5 `find_element` (Search for UI Element by Conditions)
@@ -215,11 +214,11 @@ Retrieves a list of applications installed on Windows.
 * **Enforce Focusing**: Always call `focus_window` before performing any operations on a window. If a window is hidden in the background, OS-level click and text input events might be blocked.
 * **Restore Minimized Windows**: When calling `focus_window`, set `restore_if_minimized: true` to ensure the window is restored and active even if it is minimized.
 
-### 3.2 Gradual Control of Search Depth (`depth`)
-* Calling `get_ui_tree` with a deep value like `depth=8` from the start will traverse unnecessary child elements, causing performance to drop significantly.
+### 3.2 Gradual Control of Search Depth (`max_depth`)
+* Calling `get_ui_tree` with a deep value like `max_depth=8` from the start will traverse unnecessary child elements, causing performance to drop significantly.
 * **Core Strategy**:
-  1. First, call `get_ui_tree` with `depth=2` or `3` to scan the general window header and main content areas.
-  2. Once you identify where the target element is nested (e.g., inside lists, tree views, or settings panels), either narrow down the scan by targetting the parent element, or increase the depth to `5` or `6` to rescan.
+  1. First, call `get_ui_tree` with `max_depth=2` or `3` to scan the general window header and main content areas.
+  2. Once you identify where the target element is nested (e.g., inside lists, tree views, or settings panels), either narrow down the scan by targetting the parent element, or increase the max_depth to `5` or `6` to rescan.
 
 ### 3.3 Locating Elements by Highly Unique Attributes
 * Specify `automation_id` in `conditions` for `find_element` whenever possible.
@@ -245,7 +244,7 @@ If `success` in the API return value is `false`, perform recovery steps based on
 | Error Code | Assumed Cause | Agent Recovery Procedure |
 | :--- | :--- | :--- |
 | **`WINDOW_NOT_FOUND`** | - The application has not launched yet.<br>- The window title changed. | 1. Run `get_windows()` without arguments to check all currently open windows and their titles.<br>2. If a window with a partially matching title exists, use its `handle`.<br>3. If no window exists, relaunch the application using `start_application`. |
-| **`ELEMENT_NOT_FOUND`** | - Screen transition has not completed.<br>- Search conditions are too strict.<br>- The element is deeply nested. | 1. Wait for 1–2 seconds and retry `find_element`.<br>2. Rescan the UI structure by calling `get_ui_tree` with an increased `depth`.<br>3. Relax the search conditions, such as switching from exact match `name` to partial match `name_contains`. |
+| **`ELEMENT_NOT_FOUND`** | - Screen transition has not completed.<br>- Search conditions are too strict.<br>- The element is deeply nested. | 1. Wait for 1–2 seconds and retry `find_element`.<br>2. Rescan the UI structure by calling `get_ui_tree` with an increased `max_depth`.<br>3. Relax the search conditions, such as switching from exact match `name` to partial match `name_contains`. |
 | **`ELEMENT_DISABLED`** | - The input element is read-only.<br>- Prerequisites (like checkboxes) are not met. | 1. Use `get_ui_tree` to inspect the states of surrounding elements.<br>2. Determine if other actions (like clicks) are needed to enable the element, and adjust the execution sequence.<br>3. Try using `set_value` to set the value directly. |
 | **`ACCESS_DENIED`** | - Insufficient OS permissions (e.g., operating an admin app).<br>- Blocked by UAC. | 1. Verify if Hermes Agent itself is running with administrator privileges.<br>2. Notify the user: "Administrator privileges are required to run this operation," and abort the task. |
 | **`TIMEOUT`** | - Delay in processing.<br>- Verification conditions were not met. | 1. Retrieve the latest UI state using `get_windows` or `get_ui_tree`.<br>2. If the transition has completed, continue processing. Otherwise, increase the timeout duration and retry. |

@@ -14,6 +14,7 @@ from tools import (
     get_windows,
     focus_window,
     get_ui_tree,
+    find_element,
     start_application,
 )
 
@@ -47,8 +48,6 @@ class TestGUIPlugin(unittest.TestCase):
         mock_proc_instance.name.return_value = "notepad.exe"
         mock_process.return_value = mock_proc_instance
         
-        mock_get_rect.return_value = (10, 10, 110, 110)
-
         # EnumWindowsがコールバックを呼び出すように擬似実装
         def enum_impl(callback: object, extra: object) -> None:
             func = cast(Any, callback)
@@ -63,27 +62,32 @@ class TestGUIPlugin(unittest.TestCase):
         self.assertEqual(windows[0]["title"], "テストメモ帳")
         self.assertEqual(windows[0]["handle"], 10001)
         self.assertEqual(windows[0]["process_name"], "notepad.exe")
-        self.assertEqual(windows[0]["rect"], {"x": 10, "y": 10, "width": 100, "height": 100})
 
     @patch("win32gui.IsWindow")
     @patch("win32gui.ShowWindow")
     @patch("win32gui.SetForegroundWindow")
+    @patch("win32gui.GetForegroundWindow")
+    @patch("win32gui.BringWindowToTop")
     @patch("tools.get_windows")
     def test_focus_window_by_handle(
         self,
         mock_get_windows: MagicMock,
+        mock_bring_window: MagicMock,
+        mock_get_foreground: MagicMock,
         mock_set_foreground: MagicMock,
         mock_show_window: MagicMock,
         mock_is_window: MagicMock,
     ) -> None:
         """ハンドル指定でのフォーカス処理が正常に動作することを検証する。"""
         mock_is_window.return_value = True
+        mock_get_foreground.return_value = 12345
 
         result = focus_window(window_handle=12345)
         
         self.assertTrue(result["success"])
         self.assertEqual(result["handle"], 12345)
-        mock_set_foreground.assert_called_once_with(12345)
+        self.assertEqual(result["state_after"], {})
+        mock_set_foreground.assert_called_with(12345)
 
     def test_get_ui_tree_invalid_params(self) -> None:
         """不正な引数でget_ui_treeを呼び出した際にエラーが発生することを検証する。"""
@@ -126,12 +130,130 @@ class TestGUIPlugin(unittest.TestCase):
         mock_app_class.return_value.connect.return_value = mock_app
 
         # 実行
-        result = get_ui_tree(window_handle=9999, depth=1)
+        result = get_ui_tree(window_handle=9999, max_depth=1)
         
         self.assertIn("window", result)
         self.assertIn("tree", result)
         self.assertEqual(result["tree"]["control_type"], "Window")
         self.assertEqual(result["tree"]["name"], "テスト")
+        self.assertNotIn("rect", result["tree"])
+
+    @patch("tools._get_cached_element")
+    @patch("pywinauto.Application")
+    @patch("tools.get_windows")
+    def test_find_element_success(self, mock_get_windows: MagicMock, mock_app_class: MagicMock, mock_get_cached: MagicMock) -> None:
+        """find_elementが条件に合う要素を正常に見つけ、rectを付与して返すことを検証する。"""
+        mock_get_windows.return_value = [{
+            "title": "テスト",
+            "handle": 9999,
+            "process_id": 123,
+            "process_name": "test.exe",
+            "visible": True,
+            "minimized": False,
+            "rect": {"x": 0, "y": 0, "width": 100, "height": 100}
+        }]
+
+        mock_app = MagicMock()
+        mock_window = MagicMock()
+        
+        mock_info = MagicMock()
+        mock_info.control_type = "Button"
+        mock_info.name = "送信"
+        mock_info.automation_id = "btn_send"
+        mock_info.class_name = "MockButton"
+        
+        mock_window.element_info = mock_info
+        mock_window.rectangle.return_value = MagicMock(left=10, top=20, width=lambda: 50, height=lambda: 30)
+        mock_window.is_enabled.return_value = True
+        mock_window.is_visible.return_value = True
+        mock_window.children.return_value = []
+        mock_window.exists.return_value = True
+
+        mock_app.window.return_value = mock_window
+        mock_app_class.return_value.connect.return_value = mock_app
+
+        # _get_cached_elementがモック要素を返すように設定
+        mock_get_cached.return_value = mock_window
+
+        # 実行
+        result = find_element(
+            window_handle=9999,
+            conditions={"control_type": "Button", "name": "送信", "max_depth": 1},
+            timeout=1.0
+        )
+        
+        self.assertEqual(result["control_type"], "Button")
+        self.assertEqual(result["name"], "送信")
+        self.assertIn("rect", result)
+        self.assertEqual(result["rect"]["x"], 10)
+        self.assertEqual(result["rect"]["y"], 20)
+        self.assertEqual(result["rect"]["width"], 50)
+        self.assertEqual(result["rect"]["height"], 30)
+
+    @patch("tools._get_cached_element")
+    @patch("tools.get_ui_tree")
+    @patch("tools.get_windows")
+    def test_find_element_dynamic_depth(self, mock_get_windows: MagicMock, mock_get_ui_tree: MagicMock, mock_get_cached: MagicMock) -> None:
+        """find_elementが最初は見つからず、depthが増えた後の再試行で見つかることを検証する。"""
+        mock_get_windows.return_value = [{
+            "title": "テスト",
+            "handle": 9999,
+            "process_id": 123,
+            "process_name": "test.exe",
+            "visible": True,
+            "minimized": False,
+            "rect": {"x": 0, "y": 0, "width": 100, "height": 100}
+        }]
+
+        # 1回目の get_ui_tree (max_depth=1) -> 対象がないツリー
+        tree_1 = {
+            "window": None,
+            "tree": {
+                "control_type": "Window",
+                "name": "テスト",
+                "handle": 9999,
+                "children": []
+            }
+        }
+
+        # 2回目の get_ui_tree (max_depth=2) -> 対象(Button)を含むツリー
+        tree_2 = {
+            "window": None,
+            "tree": {
+                "control_type": "Window",
+                "name": "テスト",
+                "handle": 9999,
+                "children": [
+                    {
+                        "control_type": "Button",
+                        "name": "送信",
+                        "handle": 8888,
+                        "children": []
+                    }
+                ]
+            }
+        }
+
+        mock_get_ui_tree.side_effect = [tree_1, tree_2]
+
+        mock_element = MagicMock()
+        mock_element.rectangle.return_value = MagicMock(left=10, top=20, width=lambda: 50, height=lambda: 30)
+        mock_get_cached.return_value = mock_element
+
+        # 実行 (初期深さ 1 で開始)
+        result = find_element(
+            window_handle=9999,
+            conditions={"control_type": "Button", "name": "送信", "max_depth": 1},
+            timeout=1.0
+        )
+
+        self.assertEqual(result["control_type"], "Button")
+        self.assertEqual(result["name"], "送信")
+        self.assertEqual(result["rect"]["x"], 10)
+        # get_ui_treeが2回呼ばれていることを確認（1回目：max_depth=1, 2回目：max_depth=2）
+        self.assertEqual(mock_get_ui_tree.call_count, 2)
+        mock_get_ui_tree.assert_any_call(window_handle=9999, max_depth=1, include_invisible=True)
+        mock_get_ui_tree.assert_any_call(window_handle=9999, max_depth=2, include_invisible=True)
 
     @patch("subprocess.Popen")
     @patch("psutil.Process")
